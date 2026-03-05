@@ -2,10 +2,596 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>YesChef — каталог рецептов</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    :root {
+      --primary: #C17F4E;
+      --primary-light: #F5EDE3;
+      --bg: #FAFAF8;
+      --surface: #FFFFFF;
+      --text: #2D2D2D;
+      --text-muted: #888;
+      --border: #E8E4DF;
+      --radius: 12px;
+      --shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Шапка ─────────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-inner {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .logo {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--primary);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .logo span { color: var(--text); font-weight: 400; font-size: 14px; margin-left: 6px; }
+
+    .search-wrap { flex: 1; }
+
+    .search-wrap input {
+      width: 100%;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      font-size: 14px;
+      outline: none;
+      background: var(--bg);
+      transition: border 0.2s;
+    }
+
+    .search-wrap input:focus { border-color: var(--primary); }
+
+    /* ── Категории ──────────────────────────────────────── */
+    .categories {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .categories-inner {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 20px;
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .categories-inner::-webkit-scrollbar { display: none; }
+
+    .cat-btn {
+      padding: 10px 16px;
+      border: none;
+      background: none;
+      font-size: 14px;
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .cat-btn:hover { color: var(--primary); }
+    .cat-btn.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+
+    /* ── Контент ────────────────────────────────────────── */
+    .content {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 24px 20px;
+    }
+
+    /* ── Список рецептов ─────────────────────────────────── */
+    .recipes-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .recipe-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      padding: 18px;
+      cursor: pointer;
+      transition: box-shadow 0.2s, transform 0.1s;
+    }
+
+    .recipe-card:hover {
+      box-shadow: var(--shadow);
+      transform: translateY(-1px);
+    }
+
+    .recipe-card h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      line-height: 1.3;
+    }
+
+    .recipe-card .cat-label {
+      font-size: 12px;
+      color: var(--primary);
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    .recipe-card .meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .tags-row { margin-top: 8px; display: flex; gap: 4px; flex-wrap: wrap; }
+
+    .tag {
+      font-size: 11px;
+      padding: 2px 8px;
+      background: var(--primary-light);
+      color: var(--primary);
+      border-radius: 20px;
+    }
+
+    /* ── Детальный просмотр ──────────────────────────────── */
+    #view-detail { display: none; }
+
+    .back-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      color: var(--primary);
+      cursor: pointer;
+      margin-bottom: 20px;
+      background: none;
+      border: none;
+      padding: 0;
+    }
+
+    .back-btn:hover { opacity: 0.8; }
+
+    .detail-header { margin-bottom: 24px; }
+
+    .detail-header h1 {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 8px;
+    }
+
+    .detail-meta {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .detail-meta .cat-label {
+      font-size: 13px;
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .detail-meta .yield {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* ── Кнопки действий ─────────────────────────────────── */
+    .action-btns {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 20px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 24px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.2s;
+    }
+
+    .btn-primary:hover { opacity: 0.88; }
+
+    .qr-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .qr-wrap canvas, .qr-wrap img { border-radius: 6px; }
+    .qr-label { font-size: 11px; color: var(--text-muted); }
+
+    /* ── Секции рецепта ──────────────────────────────────── */
+    .section {
+      margin-bottom: 28px;
+    }
+
+    .section h2 {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary);
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    /* Ингредиенты */
+    .ingredients-list { list-style: none; }
+
+    .ingredients-list li {
+      display: flex;
+      justify-content: space-between;
+      padding: 9px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 15px;
+    }
+
+    .ingredients-list li:last-child { border-bottom: none; }
+
+    .ing-qty {
+      color: var(--text-muted);
+      font-size: 14px;
+      white-space: nowrap;
+      margin-left: 12px;
+    }
+
+    /* Шаги */
+    .steps-list { list-style: none; }
+
+    .steps-list li {
+      display: flex;
+      gap: 14px;
+      margin-bottom: 16px;
+      align-items: flex-start;
+    }
+
+    .step-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .step-text { font-size: 15px; line-height: 1.6; padding-top: 4px; }
+
+    /* Заметки */
+    .notes-box {
+      background: var(--primary-light);
+      border-left: 3px solid var(--primary);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 14px 16px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text);
+    }
+
+    /* ── Пустое состояние ────────────────────────────────── */
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+    }
+
+    .empty p { font-size: 16px; }
+
+    /* ── Загрузка ─────────────────────────────────────────── */
+    .loading {
+      text-align: center;
+      padding: 60px;
+      color: var(--text-muted);
+      font-size: 15px;
+    }
+
+    /* ── Адаптив ─────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .header-inner { flex-wrap: wrap; }
+      .logo span { display: none; }
+      .recipes-grid { grid-template-columns: 1fr; }
+      .detail-header h1 { font-size: 22px; }
+    }
+  </style>
 </head>
 <body>
-  <h1>YesChef</h1>
-  <p>Скоро здесь появится каталог рецептов.</p>
+
+<header>
+  <div class="header-inner">
+    <a class="logo" href="#" onclick="showList()">YesChef <span>каталог рецептов</span></a>
+    <div class="search-wrap">
+      <input type="search" id="search-input" placeholder="Поиск по рецептам, тегам..." oninput="filterRecipes()">
+    </div>
+  </div>
+</header>
+
+<div class="categories">
+  <div class="categories-inner" id="categories-bar">
+    <button class="cat-btn active" data-cat="Все" onclick="selectCat(this)">Все</button>
+    <button class="cat-btn" data-cat="Первое" onclick="selectCat(this)">Первое</button>
+    <button class="cat-btn" data-cat="Второе" onclick="selectCat(this)">Второе</button>
+    <button class="cat-btn" data-cat="Десерт" onclick="selectCat(this)">Десерт</button>
+    <button class="cat-btn" data-cat="Выпечка" onclick="selectCat(this)">Выпечка</button>
+    <button class="cat-btn" data-cat="Салаты" onclick="selectCat(this)">Салаты</button>
+    <button class="cat-btn" data-cat="Закуски" onclick="selectCat(this)">Закуски</button>
+    <button class="cat-btn" data-cat="Напитки" onclick="selectCat(this)">Напитки</button>
+    <button class="cat-btn" data-cat="Завтраки" onclick="selectCat(this)">Завтраки</button>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- Список рецептов -->
+  <div id="view-list">
+    <div id="recipes-container" class="loading">Загрузка…</div>
+  </div>
+
+  <!-- Детальный просмотр -->
+  <div id="view-detail">
+    <button class="back-btn" onclick="showList()">← Назад к каталогу</button>
+    <div class="detail-header">
+      <h1 id="d-name"></h1>
+      <div class="detail-meta">
+        <span class="cat-label" id="d-cat"></span>
+        <span class="yield" id="d-yield"></span>
+      </div>
+      <div class="tags-row" id="d-tags"></div>
+    </div>
+
+    <div class="action-btns">
+      <a id="deeplink-btn" class="btn-primary" href="#">
+        ↗ Открыть в YesChef
+      </a>
+      <div class="qr-wrap">
+        <div id="qr-code"></div>
+        <span class="qr-label">Сканируй для импорта</span>
+      </div>
+    </div>
+
+    <div class="section" id="section-ingredients">
+      <h2>Ингредиенты</h2>
+      <ul class="ingredients-list" id="d-ingredients"></ul>
+    </div>
+
+    <div class="section" id="section-steps">
+      <h2>Приготовление</h2>
+      <ol class="steps-list" id="d-steps"></ol>
+    </div>
+
+    <div class="section" id="section-notes" style="display:none">
+      <h2>Заметки</h2>
+      <div class="notes-box" id="d-notes"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://olcyjvqavdujwxrgygid.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_eBU12Gz8DHeARRjWcg5snw_dq4MJDxw';
+  const { createClient } = supabase;
+  const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let allRecipes = [];
+  let currentCat = 'Все';
+  let currentRecipe = null;
+  let qrInstance = null;
+
+  // ── Загрузка ─────────────────────────────────────────────
+
+  async function loadRecipes() {
+    const { data, error } = await db
+      .from('recipes')
+      .select('*')
+      .eq('published', true)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      document.getElementById('recipes-container').innerHTML =
+        '<div class="empty"><p>Не удалось загрузить рецепты.</p></div>';
+      return;
+    }
+
+    allRecipes = data || [];
+    renderList(allRecipes);
+  }
+
+  // ── Фильтрация ───────────────────────────────────────────
+
+  function filterRecipes() {
+    const q = document.getElementById('search-input').value.trim().toLowerCase();
+    let list = allRecipes;
+
+    if (currentCat !== 'Все') {
+      list = list.filter(r => (r.categories || []).includes(currentCat));
+    }
+
+    if (q) {
+      list = list.filter(r => {
+        const inName = r.name.toLowerCase().includes(q);
+        const inTags = (r.tags || []).some(t => t.toLowerCase().includes(q));
+        const inIng  = (r.ingredients || []).some(i => i.name.toLowerCase().includes(q));
+        return inName || inTags || inIng;
+      });
+    }
+
+    renderList(list);
+  }
+
+  function selectCat(btn) {
+    document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentCat = btn.dataset.cat;
+    filterRecipes();
+  }
+
+  // ── Рендер списка ────────────────────────────────────────
+
+  function renderList(list) {
+    const el = document.getElementById('recipes-container');
+    if (!list.length) {
+      el.innerHTML = '<div class="empty"><p>Рецепты не найдены</p></div>';
+      el.className = '';
+      return;
+    }
+
+    el.className = 'recipes-grid';
+    el.innerHTML = list.map(r => `
+      <div class="recipe-card" onclick="showDetail('${r.id}')">
+        <div class="cat-label">${(r.categories || []).join(', ') || '—'}</div>
+        <h3>${esc(r.name)}</h3>
+        <div class="meta">
+          ${r.ingredients?.length ? `<span>${r.ingredients.length} ингр.</span>` : ''}
+          ${r.steps?.length ? `<span>${r.steps.length} шагов</span>` : ''}
+          ${r.yield_amount > 1 ? `<span>${fmtQty(r.yield_amount)} ${r.yield_unit}</span>` : ''}
+        </div>
+        ${r.tags?.length ? `<div class="tags-row">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  // ── Детальный просмотр ───────────────────────────────────
+
+  function showDetail(id) {
+    const r = allRecipes.find(x => x.id === id);
+    if (!r) return;
+    currentRecipe = r;
+
+    document.getElementById('d-name').textContent = r.name;
+    document.getElementById('d-cat').textContent = (r.categories || []).join(', ') || '';
+    document.getElementById('d-yield').textContent =
+      r.yield_amount > 1 ? `${fmtQty(r.yield_amount)} ${r.yield_unit}` : '';
+
+    // Теги
+    const tagsEl = document.getElementById('d-tags');
+    tagsEl.innerHTML = (r.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('');
+
+    // Deep link
+    const deeplink = `yeschef://import?id=${r.id}`;
+    document.getElementById('deeplink-btn').href = deeplink;
+
+    // QR-код
+    document.getElementById('qr-code').innerHTML = '';
+    qrInstance = new QRCode(document.getElementById('qr-code'), {
+      text: deeplink,
+      width: 96,
+      height: 96,
+      colorDark: '#2D2D2D',
+      colorLight: '#FFFFFF',
+    });
+
+    // Ингредиенты
+    const ingEl = document.getElementById('d-ingredients');
+    ingEl.innerHTML = (r.ingredients || []).map(i => `
+      <li>
+        <span>${esc(i.name)}</span>
+        <span class="ing-qty">${i.quantity > 0 ? fmtQty(i.quantity) + ' ' + i.unit : i.unit}</span>
+      </li>
+    `).join('');
+
+    // Шаги
+    const stepsEl = document.getElementById('d-steps');
+    stepsEl.innerHTML = (r.steps || []).map((s, idx) => `
+      <li>
+        <div class="step-num">${idx + 1}</div>
+        <div class="step-text">${esc(s.description)}</div>
+      </li>
+    `).join('');
+
+    // Заметки
+    const notesSection = document.getElementById('section-notes');
+    if (r.notes) {
+      document.getElementById('d-notes').textContent = r.notes;
+      notesSection.style.display = '';
+    } else {
+      notesSection.style.display = 'none';
+    }
+
+    document.getElementById('view-list').style.display = 'none';
+    document.getElementById('view-detail').style.display = '';
+    window.scrollTo(0, 0);
+
+    // URL hash для прямой ссылки
+    window.location.hash = r.id;
+  }
+
+  function showList() {
+    document.getElementById('view-list').style.display = '';
+    document.getElementById('view-detail').style.display = 'none';
+    window.location.hash = '';
+    currentRecipe = null;
+  }
+
+  // ── Утилиты ──────────────────────────────────────────────
+
+  function esc(str) {
+    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function fmtQty(v) {
+    return v % 1 === 0 ? String(v) : v.toFixed(1);
+  }
+
+  // ── Инит ─────────────────────────────────────────────────
+
+  loadRecipes().then(() => {
+    // Если в URL есть хэш — открываем рецепт сразу
+    if (window.location.hash) {
+      const id = window.location.hash.slice(1);
+      if (id) showDetail(id);
+    }
+  });
+</script>
 </body>
 </html>
