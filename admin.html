@@ -222,6 +222,53 @@
       padding: 0 4px;
     }
 
+    /* Автоподстановка ингредиентов */
+    .ing-wrap {
+      position: relative;
+      flex: 3;
+    }
+
+    .ing-wrap input { width: 100%; }
+
+    .ing-dropdown {
+      position: absolute;
+      top: calc(100% + 2px);
+      left: 0;
+      right: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+      z-index: 100;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .ing-dropdown-item {
+      padding: 9px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .ing-dropdown-item:hover { background: var(--primary-light); }
+
+    .ing-dropdown-unit {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: 8px;
+    }
+
+    /* Подсказка что поле с подстановкой */
+    input[list] {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 28px;
+    }
+
     /* Шаги */
     .step-row {
       display: flex;
@@ -378,7 +425,7 @@
 
     <div class="field">
       <label>Выход — единица</label>
-      <input type="text" id="f-yield-unit" value="порций">
+      <input type="text" id="f-yield-unit" value="порций" list="yield-units-list" autocomplete="off">
     </div>
 
     <div class="field full">
@@ -419,6 +466,31 @@
   </div>
   <div class="error-msg" id="form-error"></div>
 </div>
+
+<!-- Списки единиц измерения (синхронизированы с Flutter CatalogService._unitNorm) -->
+<datalist id="ing-units-list">
+  <option value="г">
+  <option value="кг">
+  <option value="мл">
+  <option value="л">
+  <option value="шт.">
+  <option value="ч.л.">
+  <option value="ст.л.">
+  <option value="щепотка">
+  <option value="стакан">
+  <option value="по вкусу">
+</datalist>
+
+<datalist id="yield-units-list">
+  <option value="порций">
+  <option value="шт.">
+  <option value="г">
+  <option value="кг">
+  <option value="мл">
+  <option value="л">
+  <option value="кусков">
+  <option value="штук">
+</datalist>
 
 <script>
   const SUPABASE_URL = 'https://olcyjvqavdujwxrgygid.supabase.co';
@@ -589,9 +661,19 @@
   function renderIngredients(list) {
     document.getElementById('f-ingredients').innerHTML = list.map((i, idx) => `
       <div class="ing-row" id="ing-${idx}">
-        <input type="text"   placeholder="Название"    value="${esc(i.name || '')}"       oninput="updateIng(${idx},'name',this.value)">
-        <input type="number" placeholder="Кол-во"      value="${i.quantity || ''}"         oninput="updateIng(${idx},'quantity',this.value)" min="0" step="any">
-        <input type="text"   placeholder="Ед. (г, мл…)" value="${esc(i.unit || 'г')}"    oninput="updateIng(${idx},'unit',this.value)">
+        <div class="ing-wrap">
+          <input type="text" placeholder="Название" value="${esc(i.name || '')}"
+            oninput="updateIng(${idx},'name',this.value); ingSearch(${idx}, this)"
+            onfocus="ingSearch(${idx}, this)"
+            onblur="setTimeout(()=>closeIngDropdown(${idx}), 150)"
+            autocomplete="off">
+          <div class="ing-dropdown" id="ing-drop-${idx}" style="display:none"></div>
+        </div>
+        <input type="number" placeholder="Кол-во" value="${i.quantity || ''}"
+          oninput="updateIng(${idx},'quantity',this.value)" min="0" step="any">
+        <input type="text" placeholder="Ед. (г, мл…)" value="${esc(i.unit || 'г')}"
+          id="ing-unit-${idx}" list="ing-units-list" autocomplete="off"
+          oninput="updateIng(${idx},'unit',this.value)">
         <button class="rm-btn" onclick="removeIng(${idx})">×</button>
       </div>
     `).join('');
@@ -602,6 +684,11 @@
     window._ings = window._ings || [];
     window._ings.push({ name: '', quantity: '', unit: 'г' });
     renderIngredients(window._ings);
+    // фокус на последнее поле
+    setTimeout(() => {
+      const rows = document.querySelectorAll('.ing-row');
+      if (rows.length) rows[rows.length - 1].querySelector('input').focus();
+    }, 50);
   }
 
   function removeIng(idx) {
@@ -612,6 +699,66 @@
   function updateIng(idx, field, val) {
     if (!window._ings[idx]) return;
     window._ings[idx][field] = field === 'quantity' ? parseFloat(val) || 0 : val;
+  }
+
+  // ── Автоподстановка из каталога ──────────────────────────
+
+  let _ingSearchTimer = null;
+  let _ingCache = {}; // кэш результатов по запросу
+
+  async function ingSearch(idx, inputEl) {
+    const q = inputEl.value.trim().toLowerCase();
+    const drop = document.getElementById(`ing-drop-${idx}`);
+    if (!drop) return;
+
+    if (q.length < 1) { drop.style.display = 'none'; return; }
+
+    clearTimeout(_ingSearchTimer);
+    _ingSearchTimer = setTimeout(async () => {
+      let results;
+      if (_ingCache[q]) {
+        results = _ingCache[q];
+      } else {
+        const { data } = await db
+          .from('ingredients')
+          .select('name, default_unit')
+          .ilike('name', `%${q}%`)
+          .order('usage_count', { ascending: false })
+          .limit(8);
+        results = data || [];
+        _ingCache[q] = results;
+      }
+
+      if (!results.length) { drop.style.display = 'none'; return; }
+
+      drop.innerHTML = results.map(r => `
+        <div class="ing-dropdown-item" onmousedown="pickIng(${idx}, '${esc(r.name)}', '${esc(r.default_unit)}')">
+          <span>${esc(r.name)}</span>
+          <span class="ing-dropdown-unit">${esc(r.default_unit)}</span>
+        </div>
+      `).join('');
+      drop.style.display = 'block';
+    }, 200);
+  }
+
+  function pickIng(idx, name, unit) {
+    if (!window._ings[idx]) return;
+    window._ings[idx].name = name;
+    window._ings[idx].unit = unit;
+
+    // Обновляем поля без полного перерендера
+    const row = document.getElementById(`ing-${idx}`);
+    if (row) {
+      row.querySelector('.ing-wrap input').value = name;
+      const unitInput = document.getElementById(`ing-unit-${idx}`);
+      if (unitInput) unitInput.value = unit;
+    }
+    closeIngDropdown(idx);
+  }
+
+  function closeIngDropdown(idx) {
+    const drop = document.getElementById(`ing-drop-${idx}`);
+    if (drop) drop.style.display = 'none';
   }
 
   // ── Шаги в форме ─────────────────────────────────────────
