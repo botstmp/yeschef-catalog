@@ -448,8 +448,8 @@
   db.auth.onAuthStateChange((event, session) => {
     if (session) {
       document.getElementById('screen-login').style.display    = 'none';
-      document.getElementById('screen-dashboard').style.display = '';
-      document.getElementById('app-header').style.display      = '';
+      document.getElementById('screen-dashboard').style.display = 'block';
+      document.getElementById('app-header').style.display      = 'flex';
       loadRecipes();
       loadPending();
     } else {
@@ -580,8 +580,8 @@
   }
 
   function showScreen(name) {
-    document.getElementById('screen-dashboard').style.display = name === 'dashboard' ? '' : 'none';
-    document.getElementById('screen-form').style.display      = name === 'form'      ? '' : 'none';
+    document.getElementById('screen-dashboard').style.display = name === 'dashboard' ? 'block' : 'none';
+    document.getElementById('screen-form').style.display      = name === 'form'      ? 'block' : 'none';
   }
 
   // ── Ингредиенты в форме ──────────────────────────────────
