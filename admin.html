@@ -709,8 +709,8 @@
       if (!results.length) { drop.style.display = 'none'; return; }
 
       drop.innerHTML = results.map(r => `
-        <div class="ing-dropdown-item" onmousedown="pickIng(${idx}, '${esc(r.name)}', '${esc(r.default_unit)}')">
-          <span>${esc(r.name)}</span>
+        <div class="ing-dropdown-item" onmousedown="pickIng(${idx}, '${esc(capitalize(r.name))}', '${esc(r.default_unit)}')">
+          <span>${esc(capitalize(r.name))}</span>
           <span class="ing-dropdown-unit">${esc(r.default_unit)}</span>
         </div>
       `).join('');
@@ -811,6 +811,11 @@
 
   function esc(str) {
     return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function capitalize(str) {
+    if (!str) return str;
+    return str.charAt(0).toUpperCase() + str.slice(1);
   }
 </script>
 </body>
