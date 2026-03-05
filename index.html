@@ -553,13 +553,13 @@
     const notesSection = document.getElementById('section-notes');
     if (r.notes) {
       document.getElementById('d-notes').textContent = r.notes;
-      notesSection.style.display = '';
+      notesSection.style.display = 'block';
     } else {
       notesSection.style.display = 'none';
     }
 
     document.getElementById('view-list').style.display = 'none';
-    document.getElementById('view-detail').style.display = '';
+    document.getElementById('view-detail').style.display = 'block';
     window.scrollTo(0, 0);
 
     // URL hash для прямой ссылки
@@ -567,7 +567,7 @@
   }
 
   function showList() {
-    document.getElementById('view-list').style.display = '';
+    document.getElementById('view-list').style.display = 'block';
     document.getElementById('view-detail').style.display = 'none';
     window.location.hash = '';
     currentRecipe = null;
