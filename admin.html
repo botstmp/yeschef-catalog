@@ -260,6 +260,19 @@
       margin-left: 8px;
     }
 
+    .ing-dropdown-add {
+      padding: 9px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--primary);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ing-dropdown-add:hover { background: var(--primary-light); }
+
     /* Шаги */
     .step-row {
       display: flex;
@@ -314,6 +327,94 @@
     }
 
     #screen-dashboard { display: none; }
+
+    /* ── Значок верификации ───────────────────────────────────── */
+    .verified-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 20px;
+      background: #E8F5E9;
+      color: var(--success);
+      font-weight: 600;
+    }
+
+    .unverified-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 20px;
+      background: #FFF3E0;
+      color: #E68A00;
+      font-weight: 600;
+    }
+
+    .verify-btn {
+      font-size: 12px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: all 0.15s;
+    }
+
+    .verify-btn:hover { border-color: var(--success); color: var(--success); }
+    .verify-btn.unverify:hover { border-color: var(--danger); color: var(--danger); }
+
+    /* ── Preview карточки модерации ─────────────────────────── */
+    .pending-ings {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      line-height: 1.7;
+    }
+
+    .pending-ings strong {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .pending-steps {
+      font-size: 13px;
+      margin-bottom: 12px;
+      border-left: 3px solid var(--border);
+      padding-left: 10px;
+    }
+
+    .step-preview {
+      margin-bottom: 4px;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      color: var(--text);
+    }
+
+    .step-preview em { color: var(--text-muted); font-style: normal; }
+
+    /* ── Inline-редактор ингредиента ──────────────────────────── */
+    .ing-edit-form {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 6px 0;
+    }
+
+    .ing-edit-form input { font-size: 13px; padding: 5px 8px; }
+    .ing-edit-form select { font-size: 13px; padding: 5px 8px; width: auto; }
+    .ing-edit-form .f-name  { flex: 2; min-width: 120px; }
+    .ing-edit-form .f-unit  { flex: 0.7; min-width: 60px; }
+    .ing-edit-form .f-cat   { flex: 1.5; min-width: 110px; }
+    .ing-edit-form .f-alias { flex: 2.5; min-width: 140px; }
+
+    .ing-tbl-actions { display: flex; gap: 4px; }
   </style>
 </head>
 <body>
@@ -345,6 +446,7 @@
   <div class="tabs">
     <button class="tab active" onclick="switchTab('recipes', this)">Рецепты</button>
     <button class="tab" onclick="switchTab('pending', this)">На модерации <span id="pending-count"></span></button>
+    <button class="tab" onclick="switchTab('ingredients', this)">Ингредиенты <span id="unverified-count"></span></button>
   </div>
 
   <!-- Вкладка: рецепты -->
@@ -372,6 +474,38 @@
   <div id="tab-pending" style="display:none">
     <h2 style="margin-bottom:20px">На модерации</h2>
     <div id="pending-list"></div>
+  </div>
+
+  <!-- Вкладка: ингредиенты -->
+  <div id="tab-ingredients" style="display:none">
+    <div class="top-bar">
+      <h2>Ингредиенты каталога</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="ing-search-filter" placeholder="Поиск…"
+          oninput="filterIngredients(this.value)"
+          style="width:180px;padding:7px 12px;font-size:13px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+        <select id="ing-verified-filter" onchange="filterIngredients(document.getElementById('ing-search-filter').value)"
+          style="padding:7px 12px;font-size:13px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+          <option value="">Все</option>
+          <option value="no">Не проверены</option>
+          <option value="yes">Проверены</option>
+        </select>
+      </div>
+    </div>
+
+    <table class="recipes-table" id="ing-table">
+      <thead>
+        <tr>
+          <th>Название / Псевдонимы</th>
+          <th>Единица</th>
+          <th>Категория</th>
+          <th style="text-align:center">Проверен</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="ing-tbody"></tbody>
+    </table>
+    <div id="ing-empty" style="color:var(--text-muted);padding:20px 0;display:none">Ничего не найдено</div>
   </div>
 
 </div>
@@ -474,6 +608,7 @@
   const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
   let editingId = null;
+  let editingPendingId = null;  // id из pending_recipes при редактировании перед публикацией
 
   // ── Авторизация ──────────────────────────────────────────
 
@@ -512,8 +647,10 @@
   function switchTab(name, btn) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     btn.classList.add('active');
-    document.getElementById('tab-recipes').style.display = name === 'recipes' ? '' : 'none';
-    document.getElementById('tab-pending').style.display = name === 'pending' ? '' : 'none';
+    document.getElementById('tab-recipes').style.display     = name === 'recipes'     ? '' : 'none';
+    document.getElementById('tab-pending').style.display     = name === 'pending'     ? '' : 'none';
+    document.getElementById('tab-ingredients').style.display = name === 'ingredients' ? '' : 'none';
+    if (name === 'ingredients') loadCatalogIngredients();
   }
 
   // ── Загрузка рецептов ────────────────────────────────────
@@ -554,16 +691,37 @@
     badge.textContent = list.length ? `(${list.length})` : '';
 
     document.getElementById('pending-list').innerHTML = list.length
-      ? list.map(r => `
+      ? list.map(r => {
+          const ings  = r.ingredients || [];
+          const steps = r.steps || [];
+          const cats  = (r.categories || []).join(', ');
+
+          // Список ингредиентов (макс. 12, остальные — «+ N»)
+          const ingsPreview = ings.slice(0, 12)
+            .map(i => `<strong>${esc(capitalize(i.name))}</strong> ${i.quantity} ${esc(i.unit)}`)
+            .join(' · ') + (ings.length > 12 ? ` <em>+${ings.length - 12} ещё</em>` : '');
+
+          // Шаги (первые 3)
+          const stepsPreview = steps.slice(0, 3).map((s, idx) =>
+            `<div class="step-preview"><em>${idx+1}.</em> ${esc(s.description)}</div>`
+          ).join('') + (steps.length > 3 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">... ещё ${steps.length - 3} шагов</div>` : '');
+
+          return `
           <div class="pending-card">
             <h3>${esc(r.name)}</h3>
-            <div class="meta">${(r.categories||[]).join(', ')} · ${(r.ingredients||[]).length} ингр. · ${(r.steps||[]).length} шагов</div>
+            <div class="meta">${cats ? cats + ' · ' : ''}выход: ${r.yield_amount} ${esc(r.yield_unit || 'порций')}</div>
+
+            <div class="pending-ings">${ingsPreview || '<em>Нет ингредиентов</em>'}</div>
+
+            ${stepsPreview ? `<div class="pending-steps">${stepsPreview}</div>` : ''}
+
             <div class="actions">
               <button class="btn btn-success" onclick="approvePending('${r.id}')">✓ Одобрить</button>
+              <button class="btn btn-primary" onclick="openFormFromPending('${r.id}')">✎ Редактировать</button>
               <button class="btn btn-danger"  onclick="rejectPending('${r.id}')">✗ Отклонить</button>
             </div>
-          </div>
-        `).join('')
+          </div>`;
+        }).join('')
       : '<p style="color:var(--text-muted)">Нет рецептов на модерации</p>';
   }
 
@@ -578,8 +736,34 @@
   }
 
   async function rejectPending(id) {
+    if (!confirm('Отклонить рецепт?')) return;
     await db.from('pending_recipes').update({ status: 'rejected' }).eq('id', id);
     loadPending();
+  }
+
+  // Открывает форму редактирования из pending_recipes; при сохранении публикует
+  async function openFormFromPending(pendingId) {
+    const { data: r } = await db.from('pending_recipes').select('*').eq('id', pendingId).single();
+    if (!r) return;
+
+    editingId        = null;
+    editingPendingId = pendingId;
+
+    document.getElementById('form-title').textContent = 'Редактировать и опубликовать';
+    document.getElementById('form-error').textContent = '';
+
+    document.getElementById('f-name').value         = r.name || '';
+    document.getElementById('f-category').value     = (r.categories || [])[0] || '';
+    document.getElementById('f-tags').value         = (r.tags || []).join(', ');
+    document.getElementById('f-yield-amount').value = r.yield_amount || 1;
+    document.getElementById('f-yield-unit').value   = r.yield_unit || 'порций';
+    document.getElementById('f-description').value  = r.description || '';
+    document.getElementById('f-notes').value        = r.notes || '';
+    document.getElementById('f-published').checked  = true;
+
+    renderIngredients(r.ingredients || []);
+    renderSteps(r.steps || []);
+    showScreen('form');
   }
 
   // ── Форма рецепта ────────────────────────────────────────
@@ -621,7 +805,8 @@
   }
 
   function closeForm() {
-    editingId = null;
+    editingId        = null;
+    editingPendingId = null;
     showScreen('dashboard');
     loadRecipes();
   }
@@ -706,7 +891,16 @@
         _ingCache[q] = results;
       }
 
-      if (!results.length) { drop.style.display = 'none'; return; }
+      if (!results.length) {
+        // Показываем кнопку «Добавить в каталог»
+        const qDisp = capitalize(q);
+        drop.innerHTML = `
+          <div class="ing-dropdown-add" onmousedown="addIngToCatalog(${idx}, '${esc(q)}')">
+            <span>➕</span> Добавить «${esc(qDisp)}» в каталог
+          </div>`;
+        drop.style.display = 'block';
+        return;
+      }
 
       drop.innerHTML = results.map(r => `
         <div class="ing-dropdown-item" onmousedown="pickIng(${idx}, '${esc(capitalize(r.name))}', '${esc(r.default_unit)}')">
@@ -736,6 +930,28 @@
   function closeIngDropdown(idx) {
     const drop = document.getElementById(`ing-drop-${idx}`);
     if (drop) drop.style.display = 'none';
+  }
+
+  async function addIngToCatalog(idx, rawName) {
+    const name = rawName.trim().toLowerCase();
+    const displayName = capitalize(name);
+
+    // Вставляем в Supabase (ignoreDuplicates на случай гонки)
+    const { error } = await db.from('ingredients').upsert(
+      [{ name, default_unit: 'г', verified: false }],
+      { onConflict: 'name', ignoreDuplicates: true }
+    );
+
+    if (error) {
+      alert('Не удалось добавить ингредиент: ' + error.message);
+      return;
+    }
+
+    // Сбрасываем кэш чтобы новый результат появился при следующем поиске
+    _ingCache = {};
+
+    // Подставляем в строку ингредиента
+    pickIng(idx, displayName, 'г');
   }
 
   // ── Шаги в форме ─────────────────────────────────────────
@@ -793,7 +1009,15 @@
     };
 
     let error;
-    if (editingId) {
+    if (editingPendingId) {
+      // Публикуем из очереди: вставляем в recipes + помечаем pending как approved
+      ({ error } = await db.from('recipes').insert(payload));
+      if (!error) {
+        await db.from('pending_recipes').update({ status: 'approved' }).eq('id', editingPendingId);
+        editingPendingId = null;
+        loadPending();
+      }
+    } else if (editingId) {
       ({ error } = await db.from('recipes').update(payload).eq('id', editingId));
     } else {
       ({ error } = await db.from('recipes').insert(payload));
@@ -805,6 +1029,194 @@
     }
 
     closeForm();
+  }
+
+  // ── Ингредиенты каталога ─────────────────────────────────
+
+  let _allCatalogIngredients = [];
+  let _editingIngId = null;
+
+  const _ingCategories = ['Мука и крупы','Молочные','Мясо','Рыба','Овощи','Фрукты','Масла','Соусы','Выпечка','Напитки','Прочее'];
+  const _ingUnits      = ['г','кг','мл','л','шт.','ч.л.','ст.л.'];
+
+  async function loadCatalogIngredients() {
+    const { data } = await db
+      .from('ingredients')
+      .select('id, name, default_unit, category, verified, usage_count, aliases')
+      .order('name', { ascending: true });
+    _allCatalogIngredients = data || [];
+
+    const unverified = _allCatalogIngredients.filter(i => !i.verified).length;
+    const badge = document.getElementById('unverified-count');
+    badge.textContent = unverified ? `(${unverified} непровер.)` : '';
+
+    filterIngredients(document.getElementById('ing-search-filter')?.value || '');
+  }
+
+  function filterIngredients(q) {
+    const lower = (q || '').toLowerCase();
+    const verifiedFilter = document.getElementById('ing-verified-filter')?.value || '';
+
+    let list = _allCatalogIngredients.filter(i => {
+      const matchName = !lower || i.name.toLowerCase().includes(lower) ||
+        (i.aliases || []).some(a => a.toLowerCase().includes(lower));
+      const matchVerified =
+        verifiedFilter === '' ||
+        (verifiedFilter === 'yes' && i.verified) ||
+        (verifiedFilter === 'no' && !i.verified);
+      return matchName && matchVerified;
+    });
+
+    const tbody = document.getElementById('ing-tbody');
+    const empty = document.getElementById('ing-empty');
+
+    if (!list.length) {
+      tbody.innerHTML = '';
+      empty.style.display = '';
+      return;
+    }
+    empty.style.display = 'none';
+
+    tbody.innerHTML = list.map(i => {
+      if (_editingIngId === i.id) return renderIngEditRow(i);
+
+      const aliasText = (i.aliases || []).length
+        ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${(i.aliases).join(', ')}</div>`
+        : '';
+
+      return `
+      <tr id="ing-row-${i.id}">
+        <td>
+          <strong>${esc(capitalize(i.name))}</strong>
+          ${aliasText}
+        </td>
+        <td>${esc(i.default_unit || '—')}</td>
+        <td>${esc(i.category || '—')}</td>
+        <td style="text-align:center">
+          ${i.verified
+            ? '<span class="verified-badge">✓ Проверен</span>'
+            : '<span class="unverified-badge">? Не проверен</span>'}
+        </td>
+        <td>
+          <div class="ing-tbl-actions">
+            <button class="verify-btn ${i.verified ? 'unverify' : ''}"
+              onclick="toggleVerified('${i.id}', ${i.verified})">
+              ${i.verified ? 'Снять' : 'Проверить'}
+            </button>
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px"
+              onclick="editIngredient('${i.id}')">✎</button>
+            <button class="btn btn-danger" style="padding:4px 10px;font-size:12px"
+              onclick="deleteIngredient('${i.id}')">✕</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderIngEditRow(i) {
+    const unitOpts = _ingUnits.map(u =>
+      `<option value="${u}" ${(i.default_unit||'')=== u?'selected':''}>${u}</option>`
+    ).join('');
+    const catOpts = _ingCategories.map(c =>
+      `<option value="${c}" ${(i.category||'')=== c?'selected':''}>${c}</option>`
+    ).join('');
+
+    return `
+    <tr id="ing-row-${i.id}">
+      <td colspan="5">
+        <div class="ing-edit-form">
+          <input class="f-name" type="text" id="ied-name-${i.id}" value="${esc(i.name)}" placeholder="Название">
+          <select class="f-unit" id="ied-unit-${i.id}">${unitOpts}</select>
+          <select class="f-cat"  id="ied-cat-${i.id}">${catOpts}</select>
+          <input class="f-alias" type="text" id="ied-aliases-${i.id}"
+            value="${esc((i.aliases||[]).join(', '))}" placeholder="Псевдонимы (через запятую)">
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:12px"
+            onclick="saveIngredient('${i.id}')">✓ Сохранить</button>
+          <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px"
+            onclick="cancelEditIngredient()">Отмена</button>
+        </div>
+      </td>
+    </tr>`;
+  }
+
+  function editIngredient(id) {
+    _editingIngId = id;
+    filterIngredients(document.getElementById('ing-search-filter')?.value || '');
+    // Фокус на поле имени
+    setTimeout(() => {
+      const el = document.getElementById(`ied-name-${id}`);
+      if (el) el.focus();
+    }, 50);
+  }
+
+  function cancelEditIngredient() {
+    _editingIngId = null;
+    filterIngredients(document.getElementById('ing-search-filter')?.value || '');
+  }
+
+  async function saveIngredient(id) {
+    const name    = (document.getElementById(`ied-name-${id}`)?.value || '').trim().toLowerCase();
+    const unit    = document.getElementById(`ied-unit-${id}`)?.value || 'г';
+    const cat     = document.getElementById(`ied-cat-${id}`)?.value  || 'Прочее';
+    const aliasRaw = document.getElementById(`ied-aliases-${id}`)?.value || '';
+    const aliases = aliasRaw.split(',').map(a => a.trim().toLowerCase()).filter(Boolean);
+
+    if (!name) { alert('Название не может быть пустым'); return; }
+
+    const { error } = await db
+      .from('ingredients')
+      .update({ name, default_unit: unit, category: cat, aliases })
+      .eq('id', id);
+
+    if (error) { alert('Ошибка сохранения: ' + error.message); return; }
+
+    // Обновляем локально
+    const ing = _allCatalogIngredients.find(i => i.id === id);
+    if (ing) { ing.name = name; ing.default_unit = unit; ing.category = cat; ing.aliases = aliases; }
+
+    _editingIngId = null;
+    _ingCache = {};   // сброс кэша поиска ингредиентов в форме рецепта
+    filterIngredients(document.getElementById('ing-search-filter')?.value || '');
+  }
+
+  async function deleteIngredient(id) {
+    const ing = _allCatalogIngredients.find(i => i.id === id);
+    if (!ing) return;
+    if (!confirm(`Удалить «${capitalize(ing.name)}» из каталога?\nЭто не повлияет на уже опубликованные рецепты.`)) return;
+
+    const { error } = await db.from('ingredients').delete().eq('id', id);
+    if (error) { alert('Ошибка удаления: ' + error.message); return; }
+
+    _allCatalogIngredients = _allCatalogIngredients.filter(i => i.id !== id);
+    if (_editingIngId === id) _editingIngId = null;
+
+    const unverified = _allCatalogIngredients.filter(i => !i.verified).length;
+    document.getElementById('unverified-count').textContent = unverified ? `(${unverified} непровер.)` : '';
+
+    filterIngredients(document.getElementById('ing-search-filter')?.value || '');
+  }
+
+  async function toggleVerified(id, currentValue) {
+    const newValue = !currentValue;
+    const { error } = await db
+      .from('ingredients')
+      .update({ verified: newValue })
+      .eq('id', id);
+
+    if (error) {
+      alert('Ошибка: ' + error.message);
+      return;
+    }
+
+    // Обновляем локальный массив и перерисовываем
+    const ing = _allCatalogIngredients.find(i => i.id === id);
+    if (ing) ing.verified = newValue;
+
+    const unverified = _allCatalogIngredients.filter(i => !i.verified).length;
+    const badge = document.getElementById('unverified-count');
+    badge.textContent = unverified ? `(${unverified} непровер.)` : '';
+
+    filterIngredients(document.getElementById('ing-search-filter')?.value || '');
   }
 
   // ── Утилиты ──────────────────────────────────────────────
