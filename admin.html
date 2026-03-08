@@ -415,6 +415,30 @@
     .ing-edit-form .f-alias { flex: 2.5; min-width: 140px; }
 
     .ing-tbl-actions { display: flex; gap: 4px; }
+
+    /* ── Мультивыбор категорий рецепта ───────────────────────── */
+    .cat-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+
+    .cat-chip { display: none; }
+
+    .cat-chip + label {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text-muted);
+      transition: all 0.15s;
+      user-select: none;
+    }
+
+    .cat-chip + label:hover { border-color: var(--primary); color: var(--primary); }
+    .cat-chip:checked + label { background: var(--primary); color: white; border-color: var(--primary); }
+    .cat-chip:checked + label:hover { opacity: 0.85; }
   </style>
 </head>
 <body>
@@ -523,19 +547,18 @@
       <input type="text" id="f-name" placeholder="Борщ классический">
     </div>
 
-    <div class="field">
-      <label>Категория</label>
-      <select id="f-category">
-        <option value="">— не выбрано —</option>
-        <option>Первое</option>
-        <option>Второе</option>
-        <option>Десерт</option>
-        <option>Выпечка</option>
-        <option>Салаты</option>
-        <option>Закуски</option>
-        <option>Напитки</option>
-        <option>Завтраки</option>
-      </select>
+    <div class="field full">
+      <label>Тип блюда</label>
+      <div class="cat-chips">
+        <input type="checkbox" class="cat-chip" id="cat-1" value="Первое">    <label for="cat-1">Первое</label>
+        <input type="checkbox" class="cat-chip" id="cat-2" value="Второе">    <label for="cat-2">Второе</label>
+        <input type="checkbox" class="cat-chip" id="cat-3" value="Десерт">    <label for="cat-3">Десерт</label>
+        <input type="checkbox" class="cat-chip" id="cat-4" value="Выпечка">   <label for="cat-4">Выпечка</label>
+        <input type="checkbox" class="cat-chip" id="cat-5" value="Салаты">    <label for="cat-5">Салаты</label>
+        <input type="checkbox" class="cat-chip" id="cat-6" value="Закуски">   <label for="cat-6">Закуски</label>
+        <input type="checkbox" class="cat-chip" id="cat-7" value="Напитки">   <label for="cat-7">Напитки</label>
+        <input type="checkbox" class="cat-chip" id="cat-8" value="Завтраки">  <label for="cat-8">Завтраки</label>
+      </div>
     </div>
 
     <div class="field">
@@ -753,7 +776,7 @@
     document.getElementById('form-error').textContent = '';
 
     document.getElementById('f-name').value         = r.name || '';
-    document.getElementById('f-category').value     = (r.categories || [])[0] || '';
+    setCategoryValues(r.categories || []);
     document.getElementById('f-tags').value         = (r.tags || []).join(', ');
     document.getElementById('f-yield-amount').value = r.yield_amount || 1;
     document.getElementById('f-yield-unit').value   = r.yield_unit || 'порций';
@@ -777,7 +800,7 @@
       db.from('recipes').select('*').eq('id', id).single().then(({ data: r }) => {
         if (!r) return;
         document.getElementById('f-name').value         = r.name || '';
-        document.getElementById('f-category').value     = (r.categories || [])[0] || '';
+        setCategoryValues(r.categories || []);
         document.getElementById('f-tags').value         = (r.tags || []).join(', ');
         document.getElementById('f-yield-amount').value = r.yield_amount || 1;
         document.getElementById('f-yield-unit').value   = r.yield_unit || 'порций';
@@ -791,7 +814,7 @@
       });
     } else {
       document.getElementById('f-name').value         = '';
-      document.getElementById('f-category').value     = '';
+      setCategoryValues([]);
       document.getElementById('f-tags').value         = '';
       document.getElementById('f-yield-amount').value = '1';
       document.getElementById('f-yield-unit').value   = 'порций';
@@ -991,13 +1014,12 @@
       return;
     }
 
-    const cat  = document.getElementById('f-category').value;
     const tags = document.getElementById('f-tags').value
       .split(',').map(t => t.trim()).filter(Boolean);
 
     const payload = {
       name,
-      categories:   cat ? [cat] : [],
+      categories:   getCategoryValues(),
       tags,
       yield_amount: parseFloat(document.getElementById('f-yield-amount').value) || 1,
       yield_unit:   document.getElementById('f-yield-unit').value || 'порций',
@@ -1217,6 +1239,18 @@
     badge.textContent = unverified ? `(${unverified} непровер.)` : '';
 
     filterIngredients(document.getElementById('ing-search-filter')?.value || '');
+  }
+
+  // ── Категории рецепта (мультивыбор) ─────────────────────
+
+  function getCategoryValues() {
+    return [...document.querySelectorAll('.cat-chip:checked')].map(cb => cb.value);
+  }
+
+  function setCategoryValues(cats) {
+    document.querySelectorAll('.cat-chip').forEach(cb => {
+      cb.checked = (cats || []).includes(cb.value);
+    });
   }
 
   // ── Утилиты ──────────────────────────────────────────────
