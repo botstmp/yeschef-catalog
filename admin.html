@@ -439,6 +439,36 @@
     .cat-chip + label:hover { border-color: var(--primary); color: var(--primary); }
     .cat-chip:checked + label { background: var(--primary); color: white; border-color: var(--primary); }
     .cat-chip:checked + label:hover { opacity: 0.85; }
+
+    /* ── Категории ингредиентов ───────────────────────────────── */
+    .cat-tbl { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+    .cat-tbl th {
+      text-align: left; font-size: 12px; font-weight: 700;
+      color: var(--text-muted); letter-spacing: 0.6px;
+      padding: 8px 12px; border-bottom: 1px solid var(--border);
+    }
+    .cat-tbl td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
+    .cat-tbl tr:hover td { background: var(--primary-light); }
+    .cat-order-inp { width: 60px; padding: 4px 8px; font-size: 13px; text-align: center; }
+    .cat-add-row { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+    .cat-add-row input { max-width: 240px; }
+
+    /* ── Алиасы ───────────────────────────────────────────────── */
+    .alias-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .alias-card .alias-info { flex: 1; }
+    .alias-card .alias-text { font-size: 15px; font-weight: 600; }
+    .alias-card .alias-for  { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
+    .alias-actions { display: flex; gap: 8px; flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -471,6 +501,8 @@
     <button class="tab active" onclick="switchTab('recipes', this)">Рецепты</button>
     <button class="tab" onclick="switchTab('pending', this)">На модерации <span id="pending-count"></span></button>
     <button class="tab" onclick="switchTab('ingredients', this)">Ингредиенты <span id="unverified-count"></span></button>
+    <button class="tab" onclick="switchTab('categories', this)">Категории</button>
+    <button class="tab" onclick="switchTab('aliases', this)">Алиасы <span id="alias-count"></span></button>
   </div>
 
   <!-- Вкладка: рецепты -->
@@ -530,6 +562,53 @@
       <tbody id="ing-tbody"></tbody>
     </table>
     <div id="ing-empty" style="color:var(--text-muted);padding:20px 0;display:none">Ничего не найдено</div>
+  </div>
+
+  <!-- Вкладка: категории ингредиентов -->
+  <div id="tab-categories" style="display:none">
+    <div class="top-bar">
+      <h2>Категории ингредиентов</h2>
+    </div>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+      Список категорий синхронизируется с приложением при каждом запуске.
+      Порядок — чем меньше число, тем выше в списке.
+    </p>
+
+    <table class="cat-tbl" id="cat-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Название</th>
+          <th>Порядок</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="cat-tbody"></tbody>
+    </table>
+    <div id="cat-empty" style="color:var(--text-muted);padding:20px 0;display:none">Загрузка…</div>
+
+    <div class="cat-add-row">
+      <input type="text" id="new-cat-name" placeholder="Новая категория…" maxlength="50"
+        onkeydown="if(event.key==='Enter') addCategory()">
+      <input type="number" id="new-cat-order" placeholder="Порядок" value="500" min="1" max="9999"
+        style="width:90px">
+      <button class="btn btn-primary" onclick="addCategory()">+ Добавить</button>
+    </div>
+    <div class="error-msg" id="cat-error"></div>
+  </div>
+
+  <!-- Вкладка: алиасы (модерация предложений) -->
+  <div id="tab-aliases" style="display:none">
+    <div class="top-bar">
+      <h2>Предложения алиасов <span id="alias-count-title"></span></h2>
+    </div>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+      Пользователи предлагают синонимы через визард импорта. Одобренные алиасы
+      добавляются в поле <code>aliases</code> ингредиента.
+    </p>
+    <div id="alias-list">
+      <div style="color:var(--text-muted)">Загрузка…</div>
+    </div>
   </div>
 
 </div>
@@ -673,7 +752,11 @@
     document.getElementById('tab-recipes').style.display     = name === 'recipes'     ? '' : 'none';
     document.getElementById('tab-pending').style.display     = name === 'pending'     ? '' : 'none';
     document.getElementById('tab-ingredients').style.display = name === 'ingredients' ? '' : 'none';
+    document.getElementById('tab-categories').style.display  = name === 'categories'  ? '' : 'none';
+    document.getElementById('tab-aliases').style.display     = name === 'aliases'     ? '' : 'none';
     if (name === 'ingredients') loadCatalogIngredients();
+    if (name === 'categories')  loadCategories();
+    if (name === 'aliases')     loadAliasSuggestions();
   }
 
   // ── Загрузка рецептов ────────────────────────────────────
@@ -1251,6 +1334,231 @@
     document.querySelectorAll('.cat-chip').forEach(cb => {
       cb.checked = (cats || []).includes(cb.value);
     });
+  }
+
+  // ── Категории ингредиентов ────────────────────────────────
+
+  let _allCategories = [];
+
+  async function loadCategories() {
+    document.getElementById('cat-empty').style.display = '';
+    document.getElementById('cat-empty').textContent = 'Загрузка…';
+    document.getElementById('cat-tbody').innerHTML = '';
+
+    const { data, error } = await db
+      .from('ingredient_categories')
+      .select('*')
+      .order('sort_order');
+
+    if (error) {
+      document.getElementById('cat-error').textContent = 'Ошибка загрузки: ' + error.message;
+      return;
+    }
+
+    _allCategories = data || [];
+    renderCategories();
+  }
+
+  function renderCategories() {
+    const tbody = document.getElementById('cat-tbody');
+    const empty = document.getElementById('cat-empty');
+
+    if (!_allCategories.length) {
+      empty.style.display = '';
+      empty.textContent = 'Нет категорий';
+      tbody.innerHTML = '';
+      return;
+    }
+
+    empty.style.display = 'none';
+    tbody.innerHTML = _allCategories.map((cat, idx) => `
+      <tr>
+        <td style="color:var(--text-muted);font-size:13px">${idx + 1}</td>
+        <td><strong>${esc(cat.name)}</strong></td>
+        <td>
+          <input type="number" class="cat-order-inp" value="${cat.sort_order}" min="1" max="9999"
+            onchange="saveCategoryOrder(${cat.id}, this.value)"
+            style="border:1px solid var(--border);border-radius:6px;background:var(--bg)">
+        </td>
+        <td>
+          <button class="btn btn-danger" style="padding:4px 12px;font-size:12px"
+            onclick="deleteCategory(${cat.id}, '${esc(cat.name)}')">✕</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  async function saveCategoryOrder(id, newOrder) {
+    const order = parseInt(newOrder);
+    if (isNaN(order) || order < 1) return;
+
+    const { error } = await db
+      .from('ingredient_categories')
+      .update({ sort_order: order })
+      .eq('id', id);
+
+    if (error) {
+      alert('Ошибка сохранения порядка: ' + error.message);
+      return;
+    }
+
+    const cat = _allCategories.find(c => c.id === id);
+    if (cat) cat.sort_order = order;
+
+    // Пересортировать и перерисовать
+    _allCategories.sort((a, b) => a.sort_order - b.sort_order);
+    renderCategories();
+  }
+
+  async function addCategory() {
+    const nameInput  = document.getElementById('new-cat-name');
+    const orderInput = document.getElementById('new-cat-order');
+    const errEl      = document.getElementById('cat-error');
+
+    const name  = nameInput.value.trim();
+    const order = parseInt(orderInput.value) || 500;
+
+    errEl.textContent = '';
+    if (!name) { errEl.textContent = 'Введите название категории'; return; }
+    if (_allCategories.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+      errEl.textContent = 'Такая категория уже существует';
+      return;
+    }
+
+    const { data, error } = await db
+      .from('ingredient_categories')
+      .insert({ name, sort_order: order })
+      .select()
+      .single();
+
+    if (error) { errEl.textContent = 'Ошибка: ' + error.message; return; }
+
+    _allCategories.push(data);
+    _allCategories.sort((a, b) => a.sort_order - b.sort_order);
+
+    nameInput.value  = '';
+    orderInput.value = '500';
+    renderCategories();
+  }
+
+  async function deleteCategory(id, name) {
+    if (!confirm(`Удалить категорию «${name}»?\n\nСуществующие ингредиенты с этой категорией не изменятся.`)) return;
+
+    const { error } = await db
+      .from('ingredient_categories')
+      .delete()
+      .eq('id', id);
+
+    if (error) { alert('Ошибка удаления: ' + error.message); return; }
+
+    _allCategories = _allCategories.filter(c => c.id !== id);
+    renderCategories();
+  }
+
+  // ── Алиасы: модерация предложений ────────────────────────
+
+  async function loadAliasSuggestions() {
+    document.getElementById('alias-list').innerHTML =
+      '<div style="color:var(--text-muted)">Загрузка…</div>';
+
+    // Загружаем pending suggestions с данными ингредиента
+    const { data, error } = await db
+      .from('alias_suggestions')
+      .select('id, suggested_alias, ingredient_id, created_at, ingredients(name)')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      document.getElementById('alias-list').innerHTML =
+        `<div class="error-msg">Ошибка загрузки: ${esc(error.message)}</div>`;
+      return;
+    }
+
+    const list = data || [];
+    const badge = document.getElementById('alias-count');
+    const title = document.getElementById('alias-count-title');
+    badge.textContent = list.length ? `(${list.length})` : '';
+    title.textContent = list.length ? `(${list.length})` : '';
+
+    if (!list.length) {
+      document.getElementById('alias-list').innerHTML =
+        '<div style="color:var(--text-muted);padding:20px 0">Нет предложений на модерации</div>';
+      return;
+    }
+
+    document.getElementById('alias-list').innerHTML = list.map(s => `
+      <div class="alias-card" id="alias-card-${s.id}">
+        <div class="alias-info">
+          <div class="alias-text">«${esc(s.suggested_alias)}»</div>
+          <div class="alias-for">Для ингредиента: <strong>${esc(s.ingredients?.name || '—')}</strong>
+            · <span style="color:var(--text-muted);font-size:12px">${new Date(s.created_at).toLocaleDateString('ru')}</span>
+          </div>
+        </div>
+        <div class="alias-actions">
+          <button class="btn btn-success" style="padding:6px 14px;font-size:13px"
+            onclick="approveAlias(${s.id}, ${s.ingredient_id}, '${esc(s.suggested_alias)}')">✓ Одобрить</button>
+          <button class="btn btn-danger" style="padding:6px 14px;font-size:13px"
+            onclick="rejectAlias(${s.id})">✕ Отклонить</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  async function approveAlias(suggestionId, ingredientId, alias) {
+    // 1. Получаем текущие алиасы ингредиента
+    const { data: ing, error: ingErr } = await db
+      .from('ingredients')
+      .select('aliases')
+      .eq('id', ingredientId)
+      .single();
+
+    if (ingErr) { alert('Ошибка загрузки ингредиента: ' + ingErr.message); return; }
+
+    const currentAliases = ing.aliases || [];
+    const aliasLower = alias.trim().toLowerCase();
+
+    if (!currentAliases.includes(aliasLower)) {
+      // 2. Добавляем алиас
+      const { error: updErr } = await db
+        .from('ingredients')
+        .update({ aliases: [...currentAliases, aliasLower] })
+        .eq('id', ingredientId);
+
+      if (updErr) { alert('Ошибка обновления: ' + updErr.message); return; }
+    }
+
+    // 3. Помечаем предложение как одобренное
+    await db.from('alias_suggestions').update({ status: 'approved' }).eq('id', suggestionId);
+
+    // Убираем карточку из UI
+    const card = document.getElementById(`alias-card-${suggestionId}`);
+    if (card) card.remove();
+
+    // Обновляем счётчик
+    const remaining = document.querySelectorAll('[id^="alias-card-"]').length;
+    document.getElementById('alias-count').textContent = remaining ? `(${remaining})` : '';
+    document.getElementById('alias-count-title').textContent = remaining ? `(${remaining})` : '';
+
+    if (!remaining) {
+      document.getElementById('alias-list').innerHTML =
+        '<div style="color:var(--text-muted);padding:20px 0">Нет предложений на модерации</div>';
+    }
+  }
+
+  async function rejectAlias(suggestionId) {
+    await db.from('alias_suggestions').update({ status: 'rejected' }).eq('id', suggestionId);
+
+    const card = document.getElementById(`alias-card-${suggestionId}`);
+    if (card) card.remove();
+
+    const remaining = document.querySelectorAll('[id^="alias-card-"]').length;
+    document.getElementById('alias-count').textContent = remaining ? `(${remaining})` : '';
+    document.getElementById('alias-count-title').textContent = remaining ? `(${remaining})` : '';
+
+    if (!remaining) {
+      document.getElementById('alias-list').innerHTML =
+        '<div style="color:var(--text-muted);padding:20px 0">Нет предложений на модерации</div>';
+    }
   }
 
   // ── Утилиты ──────────────────────────────────────────────
