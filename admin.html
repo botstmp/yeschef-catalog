@@ -533,6 +533,46 @@
       border-radius: 12px;
       font-weight: 500;
     }
+
+    /* ── Анализатор похожих рецептов ─────────────────────────── */
+    .sim-block {
+      margin: 8px 0 10px 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      font-size: 12px;
+    }
+
+    .sim-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: default;
+    }
+
+    /* 80–100%: дубликат — красный */
+    .sim-badge.sim-dup   { background: #FFEBEE; color: #C62828; border: 1px solid #EF9A9A; }
+    /* 60–80%: похож — жёлтый */
+    .sim-badge.sim-close { background: #FFF8E1; color: #856404; border: 1px solid #FFE082; }
+    /* 40–60%: возможно похож — серый */
+    .sim-badge.sim-maybe { background: #F5F5F5; color: #555;    border: 1px solid #DDD; }
+
+    .sim-link {
+      color: inherit;
+      text-decoration: underline dotted;
+      cursor: pointer;
+    }
+
+    .sim-analyzing {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
@@ -850,6 +890,7 @@
   async function deleteRecipe(id) {
     if (!confirm('Удалить рецепт?')) return;
     await db.from('recipes').delete().eq('id', id);
+    invalidateRecipesCache();
     loadRecipes();
   }
 
@@ -889,6 +930,10 @@
 
             ${stepsPreview ? `<div class="pending-steps">${stepsPreview}</div>` : ''}
 
+            <div class="sim-block" id="sim-${r.id}">
+              <span class="sim-analyzing">⏳ Анализ похожих...</span>
+            </div>
+
             <div class="actions">
               <button class="btn btn-success" onclick="approvePending('${r.id}')">✓ Одобрить</button>
               <button class="btn btn-primary" onclick="openFormFromPending('${r.id}')">✎ Редактировать</button>
@@ -897,6 +942,9 @@
           </div>`;
         }).join('')
       : '<p style="color:var(--text-muted)">Нет рецептов на модерации</p>';
+
+    // Запускаем анализ похожих рецептов асинхронно (не блокируем рендер)
+    if (list.length) setTimeout(() => analyzeSimilarRecipes(list), 100);
   }
 
   async function approvePending(id) {
@@ -905,6 +953,7 @@
     const { id: _, status, submitted_at, ...recipe } = data;
     await db.from('recipes').insert({ ...recipe, published: true });
     await db.from('pending_recipes').update({ status: 'approved' }).eq('id', id);
+    invalidateRecipesCache();
     loadPending();
     loadRecipes();
   }
@@ -1189,6 +1238,96 @@
     }
     const hint = document.getElementById(`ing-hint-${idx}`);
     if (hint) hint.innerHTML = `<span class="ing-match-auto">✓ Нормализовано: <strong>${esc(name)}</strong></span>`;
+  }
+
+  // ── Анализатор похожих рецептов ──────────────────────────
+
+  let _publishedRecipesCache = null; // кэш опубликованных рецептов для сравнения
+
+  /** Jaccard-схожесть по набору ингредиентов двух рецептов */
+  function ingredientJaccard(ings1, ings2) {
+    const set1 = new Set((ings1 || []).map(i => normalizeForMatch(i.name || '')).filter(Boolean));
+    const set2 = new Set((ings2 || []).map(i => normalizeForMatch(i.name || '')).filter(Boolean));
+    if (!set1.size && !set2.size) return 0;
+    const intersection = [...set1].filter(i => set2.has(i)).length;
+    const union = new Set([...set1, ...set2]).size;
+    return union > 0 ? intersection / union : 0;
+  }
+
+  /**
+   * Комбинированная схожесть двух рецептов.
+   * Ингредиенты важнее названия: 65% / 35%
+   */
+  function recipeScore(pending, published) {
+    const nameScore = scoreMatch(pending.name || '', published.name || '');
+    const ingScore  = ingredientJaccard(pending.ingredients, published.ingredients);
+    return nameScore * 0.35 + ingScore * 0.65;
+  }
+
+  /**
+   * Для каждого рецепта на модерации ищет до 3 похожих опубликованных.
+   * Порог: 0.40. Обновляет блок #sim-{id} в карточке.
+   */
+  async function analyzeSimilarRecipes(pendingList) {
+    // Загружаем опубликованные рецепты один раз и кешируем
+    if (!_publishedRecipesCache) {
+      const { data } = await db
+        .from('recipes')
+        .select('id, name, ingredients, categories')
+        .eq('published', true);
+      _publishedRecipesCache = data || [];
+    }
+
+    const published = _publishedRecipesCache;
+    if (!published.length) {
+      // Нет опубликованных — убираем плейсхолдеры
+      pendingList.forEach(r => {
+        const el = document.getElementById(`sim-${r.id}`);
+        if (el) el.innerHTML = '';
+      });
+      return;
+    }
+
+    for (const pending of pendingList) {
+      const el = document.getElementById(`sim-${pending.id}`);
+      if (!el) continue;
+
+      // Считаем схожесть со всеми опубликованными
+      const scored = published
+        .map(pub => ({ pub, score: recipeScore(pending, pub) }))
+        .filter(({ score }) => score >= 0.40)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3);
+
+      if (!scored.length) {
+        el.innerHTML = '<span style="font-size:11px;color:var(--success)">✓ Уникальный рецепт</span>';
+        continue;
+      }
+
+      const badges = scored.map(({ pub, score }) => {
+        const pct = Math.round(score * 100);
+        let cls  = 'sim-maybe';
+        let icon = '🔵';
+        if (score >= 0.80)      { cls = 'sim-dup';   icon = '🔴'; }
+        else if (score >= 0.60) { cls = 'sim-close'; icon = '🟡'; }
+
+        return `<span class="sim-badge ${cls}" title="Схожесть ${pct}%">
+          ${icon} <span class="sim-link" onclick="openForm('${pub.id}')">${esc(pub.name)}</span>
+          &nbsp;${pct}%
+        </span>`;
+      }).join('');
+
+      const label = scored[0].score >= 0.80
+        ? '<strong style="font-size:11px;color:#C62828">Возможный дубликат:</strong>'
+        : '<span style="font-size:11px;color:var(--text-muted)">Похожие рецепты:</span>';
+
+      el.innerHTML = `${label} ${badges}`;
+    }
+  }
+
+  /** Сбросить кеш опубликованных рецептов (вызывать при публикации/удалении) */
+  function invalidateRecipesCache() {
+    _publishedRecipesCache = null;
   }
 
   // ── Автоподстановка из каталога ──────────────────────────
