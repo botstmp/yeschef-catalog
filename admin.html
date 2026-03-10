@@ -469,6 +469,70 @@
     .alias-card .alias-text { font-size: 15px; font-weight: 600; }
     .alias-card .alias-for  { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
     .alias-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+    /* ── Fuzzy match подсказки в форме ингредиентов ──────────── */
+    .ing-match-hint {
+      margin: -2px 0 6px 0;
+      min-height: 0;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ing-match-auto {
+      color: var(--success);
+      font-size: 12px;
+      padding: 2px 8px;
+      background: #E8F5E9;
+      border-radius: 20px;
+    }
+
+    .ing-match-suggest {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #856404;
+      background: #FFF8E1;
+      border: 1px solid #FFE082;
+      border-radius: 20px;
+      padding: 2px 8px;
+      font-size: 12px;
+    }
+
+    .ing-match-accept {
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: 12px;
+      border: 1px solid #856404;
+      background: none;
+      color: #856404;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .ing-match-accept:hover { background: #856404; color: white; }
+
+    .ing-match-dismiss {
+      background: none;
+      border: none;
+      color: #856404;
+      cursor: pointer;
+      font-size: 13px;
+      padding: 0 2px;
+      line-height: 1;
+    }
+
+    /* ── Автор в карточке модерации ──────────────────────────── */
+    .author-tag {
+      display: inline-block;
+      background: var(--primary-light);
+      color: var(--primary);
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 500;
+    }
   </style>
 </head>
 <body>
@@ -710,7 +774,8 @@
   const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
   let editingId = null;
-  let editingPendingId = null;  // id из pending_recipes при редактировании перед публикацией
+  let editingPendingId   = null;  // id из pending_recipes при редактировании перед публикацией
+  let _pendingAuthorName = null;  // author_name из pending_recipes (сохраняем для публикации)
 
   // ── Авторизация ──────────────────────────────────────────
 
@@ -815,7 +880,10 @@
           return `
           <div class="pending-card">
             <h3>${esc(r.name)}</h3>
-            <div class="meta">${cats ? cats + ' · ' : ''}выход: ${r.yield_amount} ${esc(r.yield_unit || 'порций')}</div>
+            <div class="meta">
+              ${cats ? cats + ' · ' : ''}выход: ${r.yield_amount} ${esc(r.yield_unit || 'порций')}
+              ${r.author_name ? `&nbsp; <span class="author-tag">✍ ${esc(r.author_name)}</span>` : ''}
+            </div>
 
             <div class="pending-ings">${ingsPreview || '<em>Нет ингредиентов</em>'}</div>
 
@@ -852,8 +920,9 @@
     const { data: r } = await db.from('pending_recipes').select('*').eq('id', pendingId).single();
     if (!r) return;
 
-    editingId        = null;
-    editingPendingId = pendingId;
+    editingId          = null;
+    editingPendingId   = pendingId;
+    _pendingAuthorName = r.author_name || null;
 
     document.getElementById('form-title').textContent = 'Редактировать и опубликовать';
     document.getElementById('form-error').textContent = '';
@@ -870,6 +939,9 @@
     renderIngredients(r.ingredients || []);
     renderSteps(r.steps || []);
     showScreen('form');
+
+    // Запускаем fuzzy matching асинхронно (не блокируем UI)
+    setTimeout(() => autoMatchIngredients(r.ingredients || []), 300);
   }
 
   // ── Форма рецепта ────────────────────────────────────────
@@ -911,8 +983,9 @@
   }
 
   function closeForm() {
-    editingId        = null;
-    editingPendingId = null;
+    editingId          = null;
+    editingPendingId   = null;
+    _pendingAuthorName = null;
     showScreen('dashboard');
     loadRecipes();
   }
@@ -944,6 +1017,7 @@
         </select>
         <button class="rm-btn" onclick="removeIng(${idx})">×</button>
       </div>
+      <div class="ing-match-hint" id="ing-hint-${idx}"></div>
     `).join('');
     window._ings = JSON.parse(JSON.stringify(list));
   }
@@ -967,6 +1041,154 @@
   function updateIng(idx, field, val) {
     if (!window._ings[idx]) return;
     window._ings[idx][field] = field === 'quantity' ? parseFloat(val) || 0 : val;
+  }
+
+  // ── Fuzzy matching ────────────────────────────────────────
+
+  /** Нормализация: нижний регистр, сортировка слов (как в Dart: "лук зеленый" = "зеленый лук") */
+  function normalizeForMatch(s) {
+    return s.toLowerCase()
+      .replace(/[^\wа-яёa-z0-9\s]/gi, '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .sort()
+      .join(' ');
+  }
+
+  /** Расстояние Левенштейна */
+  function levenshtein(a, b) {
+    if (a === b) return 0;
+    const m = a.length, n = b.length;
+    const dp = [];
+    for (let i = 0; i <= m; i++) {
+      dp[i] = [];
+      for (let j = 0; j <= n; j++) {
+        dp[i][j] = i === 0 ? j : j === 0 ? i : 0;
+      }
+    }
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = a[i-1] === b[j-1]
+          ? dp[i-1][j-1]
+          : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+      }
+    }
+    return dp[m][n];
+  }
+
+  /** Комбинированная оценка: Jaccard по токенам + нормализованный Левенштейн для коротких строк */
+  function scoreMatch(query, candidate) {
+    const qn = normalizeForMatch(query);
+    const cn = normalizeForMatch(candidate);
+    if (qn === cn) return 1.0;
+
+    // Jaccard на токенах
+    const qt = new Set(qn.split(' '));
+    const ct = new Set(cn.split(' '));
+    const intersection = [...qt].filter(t => ct.has(t)).length;
+    const union = new Set([...qt, ...ct]).size;
+    const jaccard = union > 0 ? intersection / union : 0;
+
+    // Левенштейн для коротких строк (≤12 символов)
+    let lev = 0;
+    if (qn.length <= 12 && cn.length <= 12) {
+      const maxLen = Math.max(qn.length, cn.length);
+      lev = maxLen > 0 ? 1 - levenshtein(qn, cn) / maxLen : 0;
+    }
+
+    return Math.max(jaccard, lev);
+  }
+
+  /**
+   * Для каждого ингредиента рецепта ищет похожие в каталоге.
+   * Если совпадение >= 0.80 → нормализует автоматически (зелёный значок).
+   * Если 0.45–0.80 → предлагает на выбор (жёлтый значок).
+   */
+  async function autoMatchIngredients(ings) {
+    if (!ings || !ings.length) return;
+
+    for (let idx = 0; idx < ings.length; idx++) {
+      const name = (ings[idx].name || '').trim();
+      if (!name) continue;
+
+      const hint = document.getElementById(`ing-hint-${idx}`);
+      if (!hint) continue;
+
+      // Ищем по главному слову (первое слово оригинала, как наиболее значимое)
+      const words = name.toLowerCase().split(/\s+/).filter(Boolean);
+      const mainWord = words[0] || '';
+      const cacheKey = `_fuzzy_${mainWord}`;
+
+      let candidates;
+      if (_ingCache[cacheKey]) {
+        candidates = _ingCache[cacheKey];
+      } else {
+        const { data } = await db
+          .from('ingredients')
+          .select('name, default_unit, aliases')
+          .ilike('name', `%${mainWord}%`)
+          .limit(30);
+        candidates = data || [];
+        _ingCache[cacheKey] = candidates;
+      }
+
+      // Оцениваем все кандидаты (по name + aliases)
+      let best = null;
+      let bestScore = 0;
+      for (const c of candidates) {
+        const s = scoreMatch(name, c.name);
+        if (s > bestScore) { bestScore = s; best = c; }
+        for (const alias of (c.aliases || [])) {
+          const sa = scoreMatch(name, alias);
+          if (sa > bestScore) { bestScore = sa; best = c; }
+        }
+      }
+
+      if (!best || bestScore < 0.45) { hint.innerHTML = ''; continue; }
+
+      // Если уже совпадает (без учёта регистра/порядка) — не показываем
+      if (normalizeForMatch(name) === normalizeForMatch(best.name)) {
+        hint.innerHTML = '';
+        continue;
+      }
+
+      const canonicalName = capitalize(best.name);
+      const canonicalUnit = best.default_unit || 'г';
+
+      if (bestScore >= 0.80) {
+        // Автонормализация
+        if (window._ings[idx]) window._ings[idx].name = canonicalName;
+        const row = document.getElementById(`ing-${idx}`);
+        if (row) row.querySelector('.ing-wrap input').value = canonicalName;
+        hint.innerHTML = `<span class="ing-match-auto">✓ Нормализовано: <strong>${esc(canonicalName)}</strong></span>`;
+      } else {
+        // Предложение для админа
+        const pct = Math.round(bestScore * 100);
+        hint.innerHTML = `
+          <span class="ing-match-suggest">
+            ? Похожее: <strong>${esc(canonicalName)}</strong> (${pct}%)
+            <button class="ing-match-accept"
+              onclick="acceptMatchSuggestion(${idx}, '${esc(canonicalName)}', '${esc(canonicalUnit)}')">
+              Принять
+            </button>
+            <button class="ing-match-dismiss" onclick="document.getElementById('ing-hint-${idx}').innerHTML=''">✕</button>
+          </span>`;
+      }
+    }
+  }
+
+  function acceptMatchSuggestion(idx, name, unit) {
+    if (!window._ings[idx]) return;
+    window._ings[idx].name = name;
+    window._ings[idx].unit = unit;
+    const row = document.getElementById(`ing-${idx}`);
+    if (row) {
+      row.querySelector('.ing-wrap input').value = name;
+      const unitSel = document.getElementById(`ing-unit-${idx}`);
+      if (unitSel) unitSel.value = unit;
+    }
+    const hint = document.getElementById(`ing-hint-${idx}`);
+    if (hint) hint.innerHTML = `<span class="ing-match-auto">✓ Нормализовано: <strong>${esc(name)}</strong></span>`;
   }
 
   // ── Автоподстановка из каталога ──────────────────────────
@@ -1116,10 +1338,15 @@
     let error;
     if (editingPendingId) {
       // Публикуем из очереди: вставляем в recipes + помечаем pending как approved
-      ({ error } = await db.from('recipes').insert(payload));
+      const publishPayload = {
+        ...payload,
+        ..._pendingAuthorName ? { author_name: _pendingAuthorName } : {},
+      };
+      ({ error } = await db.from('recipes').insert(publishPayload));
       if (!error) {
         await db.from('pending_recipes').update({ status: 'approved' }).eq('id', editingPendingId);
-        editingPendingId = null;
+        editingPendingId   = null;
+        _pendingAuthorName = null;
         loadPending();
       }
     } else if (editingId) {
