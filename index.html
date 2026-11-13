@@ -132,6 +132,16 @@
       transform: translateY(-1px);
     }
 
+    .recipe-card { overflow: hidden; }
+    .recipe-card .thumb {
+      display: block; width: calc(100% + 36px); height: 150px; object-fit: cover;
+      margin: -18px -18px 12px; background: var(--border);
+    }
+    .photos { display: flex; gap: 10px; overflow-x: auto; margin: 0 0 18px; scroll-snap-type: x mandatory; }
+    .photos img {
+      height: 260px; max-width: 100%; border-radius: var(--radius); object-fit: cover;
+      scroll-snap-align: start; flex: 0 0 auto; background: var(--border);
+    }
     .recipe-card h3 {
       font-size: 16px;
       font-weight: 600;
@@ -380,6 +390,7 @@
   <!-- Детальный просмотр -->
   <div id="view-detail">
     <button class="back-btn" onclick="showList()">← Назад к каталогу</button>
+    <div class="photos" id="d-photos"></div>
     <div class="detail-header">
       <h1 id="d-name"></h1>
       <div class="detail-meta">
@@ -488,13 +499,14 @@
 
     el.className = 'recipes-grid';
     el.innerHTML = list.map(r => `
-      <div class="recipe-card" onclick="showDetail('${r.id}')">
-        <div class="cat-label">${(r.categories || []).join(', ') || '—'}</div>
+      <div class="recipe-card" data-id="${esc(r.id)}" onclick="showDetail(this.dataset.id)">
+        ${safeImages(r)[0] ? `<img class="thumb" loading="lazy" alt="" src="${esc(safeImages(r)[0])}">` : ''}
+        <div class="cat-label">${esc((r.categories || []).join(', ')) || '—'}</div>
         <h3>${esc(r.name)}</h3>
         <div class="meta">
           ${r.ingredients?.length ? `<span>${r.ingredients.length} ингр.</span>` : ''}
           ${r.steps?.length ? `<span>${r.steps.length} шагов</span>` : ''}
-          ${r.yield_amount > 1 ? `<span>${fmtQty(r.yield_amount)} ${r.yield_unit}</span>` : ''}
+          ${r.yield_amount > 1 ? `<span>${fmtQty(r.yield_amount)} ${esc(r.yield_unit)}</span>` : ''}
         </div>
         ${r.tags?.length ? `<div class="tags-row">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
       </div>
@@ -509,6 +521,8 @@
     currentRecipe = r;
 
     document.getElementById('d-name').textContent = r.name;
+    document.getElementById('d-photos').innerHTML = safeImages(r)
+      .map(u => `<img loading="lazy" alt="" src="${esc(u)}">`).join('');
     document.getElementById('d-cat').textContent = (r.categories || []).join(', ') || '';
     document.getElementById('d-yield').textContent =
       r.yield_amount > 1 ? `${fmtQty(r.yield_amount)} ${r.yield_unit}` : '';
@@ -575,8 +589,16 @@
 
   // ── Утилиты ──────────────────────────────────────────────
 
+  // Принимаем только картинки из нашего бакета Supabase Storage
+  const IMG_PREFIX = SUPABASE_URL + '/storage/v1/object/public/recipe-images/';
+  function safeImages(r) {
+    return (Array.isArray(r.image_urls) ? r.image_urls : [])
+      .filter(u => typeof u === 'string' && u.startsWith(IMG_PREFIX))
+      .slice(0, 5);
+  }
+
   function esc(str) {
-    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
   function fmtQty(v) {

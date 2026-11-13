@@ -815,6 +815,7 @@
 
   let editingId = null;
   let editingPendingId   = null;  // id из pending_recipes при редактировании перед публикацией
+  let _pendingImageUrls  = [];    // фото из pending_recipes (сохраняем при публикации из формы)
   let _pendingAuthorName = null;  // author_name из pending_recipes (сохраняем для публикации)
 
   // ── Авторизация ──────────────────────────────────────────
@@ -921,8 +922,9 @@
           return `
           <div class="pending-card">
             <h3>${esc(r.name)}</h3>
+            ${pendingPhotos(r)}
             <div class="meta">
-              ${cats ? cats + ' · ' : ''}выход: ${r.yield_amount} ${esc(r.yield_unit || 'порций')}
+              ${cats ? esc(cats) + ' · ' : ''}выход: ${r.yield_amount} ${esc(r.yield_unit || 'порций')}
               ${r.author_name ? `&nbsp; <span class="author-tag">✍ ${esc(r.author_name)}</span>` : ''}
             </div>
 
@@ -947,12 +949,27 @@
     if (list.length) setTimeout(() => analyzeSimilarRecipes(list), 100);
   }
 
+  const IMG_PREFIX = SUPABASE_URL + '/storage/v1/object/public/recipe-images/';
+  function safeImages(r) {
+    return (Array.isArray(r.image_urls) ? r.image_urls : [])
+      .filter(u => typeof u === 'string' && u.startsWith(IMG_PREFIX));
+  }
+  function pendingPhotos(r) {
+    const imgs = safeImages(r);
+    if (!imgs.length) return '';
+    return '<div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap">' + imgs.map(u =>
+      `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="" style="height:90px;border-radius:8px;object-fit:cover"></a>`).join('') + '</div>';
+  }
+
   async function approvePending(id) {
-    const { data } = await db.from('pending_recipes').select('*').eq('id', id).single();
-    if (!data) return;
-    const { id: _, status, submitted_at, ...recipe } = data;
-    await db.from('recipes').insert({ ...recipe, published: true });
-    await db.from('pending_recipes').update({ status: 'approved' }).eq('id', id);
+    const { data, error: readErr } = await db.from('pending_recipes').select('*').eq('id', id).single();
+    if (readErr || !data) { alert('Не удалось прочитать заявку: ' + (readErr?.message || 'нет данных')); return; }
+    // Служебные поля заявки (id, статус, время, хэш для лимитов) в recipes не копируем
+    const { id: _, status, submitted_at, submitter_hash, ...recipe } = data;
+    const { error: insErr } = await db.from('recipes').insert({ ...recipe, published: true });
+    if (insErr) { alert('Не удалось опубликовать: ' + insErr.message + '\nЗаявка остаётся в очереди.'); return; }
+    const { error: updErr } = await db.from('pending_recipes').update({ status: 'approved' }).eq('id', id);
+    if (updErr) alert('Рецепт опубликован, но статус заявки не обновился: ' + updErr.message);
     invalidateRecipesCache();
     loadPending();
     loadRecipes();
@@ -960,7 +977,8 @@
 
   async function rejectPending(id) {
     if (!confirm('Отклонить рецепт?')) return;
-    await db.from('pending_recipes').update({ status: 'rejected' }).eq('id', id);
+    const { error } = await db.from('pending_recipes').update({ status: 'rejected' }).eq('id', id);
+    if (error) { alert('Не удалось отклонить: ' + error.message); return; }
     loadPending();
   }
 
@@ -972,6 +990,7 @@
     editingId          = null;
     editingPendingId   = pendingId;
     _pendingAuthorName = r.author_name || null;
+    _pendingImageUrls  = safeImages(r);
 
     document.getElementById('form-title').textContent = 'Редактировать и опубликовать';
     document.getElementById('form-error').textContent = '';
@@ -1217,7 +1236,8 @@
           <span class="ing-match-suggest">
             ? Похожее: <strong>${esc(canonicalName)}</strong> (${pct}%)
             <button class="ing-match-accept"
-              onclick="acceptMatchSuggestion(${idx}, '${esc(canonicalName)}', '${esc(canonicalUnit)}')">
+              data-name="${esc(canonicalName)}" data-unit="${esc(canonicalUnit)}"
+              onclick="acceptMatchSuggestion(${idx}, this.dataset.name, this.dataset.unit)">
               Принять
             </button>
             <button class="ing-match-dismiss" onclick="document.getElementById('ing-hint-${idx}').innerHTML=''">✕</button>
@@ -1480,12 +1500,14 @@
       const publishPayload = {
         ...payload,
         ..._pendingAuthorName ? { author_name: _pendingAuthorName } : {},
+        ..._pendingImageUrls.length ? { image_urls: _pendingImageUrls } : {},
       };
       ({ error } = await db.from('recipes').insert(publishPayload));
       if (!error) {
         await db.from('pending_recipes').update({ status: 'approved' }).eq('id', editingPendingId);
         editingPendingId   = null;
         _pendingAuthorName = null;
+        _pendingImageUrls  = [];
         loadPending();
       }
     } else if (editingId) {
@@ -1586,10 +1608,10 @@
 
   function renderIngEditRow(i) {
     const unitOpts = _ingUnits.map(u =>
-      `<option value="${u}" ${(i.default_unit||'')=== u?'selected':''}>${u}</option>`
+      `<option value="${esc(u)}" ${(i.default_unit||'')=== u?'selected':''}>${esc(u)}</option>`
     ).join('');
     const catOpts = _ingCategories.map(c =>
-      `<option value="${c}" ${(i.category||'')=== c?'selected':''}>${c}</option>`
+      `<option value="${esc(c)}" ${(i.category||'')=== c?'selected':''}>${esc(c)}</option>`
     ).join('');
 
     return `
@@ -1930,7 +1952,7 @@
   // ── Утилиты ──────────────────────────────────────────────
 
   function esc(str) {
-    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
   function capitalize(str) {
