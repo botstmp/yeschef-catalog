@@ -125,12 +125,13 @@
   /** Разбирает весь текст. Возвращает { recipes: [...], globalErrors: [...] } */
   function parse(text) {
     if (!text || !text.trim()) return { recipes: [], globalErrors: ['Текст пуст'] };
-    var rawBlocks = text.split(/^---\s*$/m);
+    text = text.replace(/\r\n?/g, '\n'); // файлы из Windows приходят с CRLF
+    var rawBlocks = text.split(/^---[ \t]*$/m);
     var recipes = [];
     var currentGroup = '';
     for (var i = 0; i < rawBlocks.length; i++) {
       // пустая строка после «---» завершает группу вариантов
-      if (/^[ \t]*\r?\n[ \t]*\r?\n/.test(rawBlocks[i])) currentGroup = '';
+      if (i > 0 && /^[ \t]*(\r\n|\n|\r)[ \t]*(\r\n|\n|\r)/.test(rawBlocks[i])) currentGroup = '';
       var b = rawBlocks[i].trim();
       if (!b) continue;
       // Строки-заголовки групп («# ===== ... =====») убираем из блока и запоминаем
