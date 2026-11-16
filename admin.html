@@ -607,6 +607,45 @@
     <button class="tab" onclick="switchTab('ingredients', this)">Ингредиенты <span id="unverified-count"></span></button>
     <button class="tab" onclick="switchTab('categories', this)">Категории</button>
     <button class="tab" onclick="switchTab('aliases', this)">Алиасы <span id="alias-count"></span></button>
+    <button class="tab" onclick="switchTab('import', this)">Импорт</button>
+  </div>
+
+  <!-- Вкладка: импорт рецептов из текста -->
+  <div id="tab-import" style="display:none">
+    <div class="top-bar"><h2>Импорт рецептов из текста</h2></div>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+      Формат тот же, что в приложении (Настройки → «Импорт из текста»). Сначала только разбор и предпросмотр —
+      в базу ничего не пишется, пока вы не нажмёте «Импортировать».
+    </p>
+    <div id="imp-drop" style="border:2px dashed var(--border);border-radius:var(--radius);padding:18px;text-align:center;background:var(--surface);margin-bottom:10px">
+      <div style="margin-bottom:8px">Перетащите сюда файлы <code>.txt</code> (можно несколько) или</div>
+      <label class="btn btn-ghost" style="cursor:pointer;display:inline-block">Выбрать файлы
+        <input type="file" id="imp-file" accept=".txt,text/plain" multiple style="display:none">
+      </label>
+      <div id="imp-files" style="font-size:12px;color:var(--text-muted);margin-top:8px"></div>
+    </div>
+    <textarea id="imp-text" placeholder="…или вставьте текст рецептов сюда (рецепты разделяются строкой ---)" style="min-height:110px"></textarea>
+    <div style="display:flex;gap:8px;margin:10px 0;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="Imp.parse()">Разобрать</button>
+      <button class="btn btn-ghost" onclick="Imp.clear()">Очистить</button>
+    </div>
+    <div id="imp-msg" style="font-size:13px;min-height:18px;margin-bottom:8px"></div>
+    <div id="imp-summary" style="font-size:14px;margin:6px 0"></div>
+    <div id="imp-bulk" style="display:none;margin:8px 0">
+      <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" onclick="Imp.selectNew()">Выбрать новые</button>
+      <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" onclick="Imp.selectAll()">Выбрать все (кроме уже в базе)</button>
+      <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" onclick="Imp.selectNone()">Снять все</button>
+    </div>
+    <div id="imp-filters" style="margin:8px 0"></div>
+    <div id="imp-list" style="margin-top:8px"></div>
+    <div id="imp-go-wrap" style="display:none;position:sticky;bottom:0;background:var(--bg);padding:12px 0;border-top:1px solid var(--border);margin-top:10px">
+      <div style="margin-bottom:8px;font-size:13px">
+        <label style="margin-right:16px"><input type="radio" name="imp-mode" value="draft" checked> Сохранить скрытыми (рекомендуется)</label>
+        <label><input type="radio" name="imp-mode" value="publish"> Сразу опубликовать</label>
+      </div>
+      <button class="btn btn-success" id="imp-go" onclick="Imp.go()">Импортировать выбранные (0)</button>
+    </div>
+    <div id="imp-result" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)"></div>
   </div>
 
   <!-- Вкладка: рецепты -->
@@ -860,6 +899,7 @@
     document.getElementById('tab-ingredients').style.display = name === 'ingredients' ? '' : 'none';
     document.getElementById('tab-categories').style.display  = name === 'categories'  ? '' : 'none';
     document.getElementById('tab-aliases').style.display     = name === 'aliases'     ? '' : 'none';
+    document.getElementById('tab-import').style.display      = name === 'import'      ? '' : 'none';
     if (name === 'ingredients') loadCatalogIngredients();
     if (name === 'categories')  loadCategories();
     if (name === 'aliases')     loadAliasSuggestions();
@@ -1960,5 +2000,7 @@
     return str.charAt(0).toUpperCase() + str.slice(1);
   }
 </script>
+<script src="recipe_import.js"></script>
+<script src="admin_import.js"></script>
 </body>
 </html>
