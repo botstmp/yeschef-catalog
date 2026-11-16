@@ -129,6 +129,8 @@
     var recipes = [];
     var currentGroup = '';
     for (var i = 0; i < rawBlocks.length; i++) {
+      // пустая строка после «---» завершает группу вариантов
+      if (/^[ \t]*\r?\n[ \t]*\r?\n/.test(rawBlocks[i])) currentGroup = '';
       var b = rawBlocks[i].trim();
       if (!b) continue;
       // Строки-заголовки групп («# ===== ... =====») убираем из блока и запоминаем
