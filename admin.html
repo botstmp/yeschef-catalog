@@ -655,9 +655,19 @@
       <button class="btn btn-primary" onclick="openForm(null)">+ Добавить рецепт</button>
     </div>
 
+    <div id="rec-bar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
+      <span id="rec-filters"></span>
+      <span style="flex:1"></span>
+      <span id="rec-sel-info" style="font-size:13px;color:var(--text-muted)"></span>
+      <button class="btn btn-success" id="rec-pub" style="padding:6px 14px;font-size:13px" onclick="bulkPublish(true)">Опубликовать выбранные</button>
+      <button class="btn btn-ghost" id="rec-unmark" style="padding:6px 14px;font-size:13px" onclick="bulkUnmark()" title="Убрать из заметок «ПРОВЕРИТЬ ПО ВИДЕО.» у выбранных (после вашей проверки)">Снять пометку «проверить»</button>
+      <button class="btn btn-ghost" id="rec-hide" style="padding:6px 14px;font-size:13px" onclick="bulkPublish(false)">Скрыть выбранные</button>
+    </div>
+
     <table class="recipes-table">
       <thead>
         <tr>
+          <th style="width:32px"><input type="checkbox" id="rec-all" style="width:16px;height:16px" onchange="toggleAllRec(this.checked)" title="Выбрать все в списке"></th>
           <th>Название</th>
           <th>Категория</th>
           <th>Ингр.</th>
@@ -907,14 +917,41 @@
 
   // ── Загрузка рецептов ────────────────────────────────────
 
+  let _recipesAll = [];
+  let _recFilter = 'all';          // all | published | hidden
+  const _recSel = new Set();
+
   async function loadRecipes() {
     const { data } = await db.from('recipes').select('*').order('created_at', { ascending: false });
-    const list = data || [];
-    document.getElementById('recipes-count').textContent = `Рецепты (${list.length})`;
+    _recipesAll = data || [];
+    // выбранные, которых уже нет в базе, убираем
+    const ids = new Set(_recipesAll.map(r => r.id));
+    [..._recSel].forEach(id => { if (!ids.has(id)) _recSel.delete(id); });
+    renderRecipes();
+  }
+
+  function _recVisible() {
+    return _recipesAll.filter(r =>
+      _recFilter === 'published' ? r.published :
+      _recFilter === 'hidden'    ? !r.published : true);
+  }
+
+  function renderRecipes() {
+    const list = _recVisible();
+    const hiddenCnt = _recipesAll.filter(r => !r.published).length;
+    document.getElementById('recipes-count').textContent = `Рецепты (${_recipesAll.length})`;
+
+    const filters = [['all', 'Все (' + _recipesAll.length + ')'],
+                     ['published', 'Опубликованные (' + (_recipesAll.length - hiddenCnt) + ')'],
+                     ['hidden', 'Скрытые (' + hiddenCnt + ')']];
+    document.getElementById('rec-filters').innerHTML = filters.map(f =>
+      `<button class="btn ${_recFilter === f[0] ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 12px;font-size:12px" onclick="setRecFilter('${f[0]}')">${f[1]}</button>`
+    ).join(' ');
 
     document.getElementById('recipes-tbody').innerHTML = list.map(r => `
       <tr>
-        <td><strong>${esc(r.name)}</strong></td>
+        <td><input type="checkbox" style="width:16px;height:16px" ${_recSel.has(r.id) ? 'checked' : ''} onchange="toggleRec('${r.id}', this.checked)"></td>
+        <td><strong>${esc(r.name)}</strong>${/ПРОВЕРИТЬ/i.test(r.notes || '') ? ' <span class="badge" style="background:#fff3cd;color:#8a6100">проверить по видео</span>' : ''}</td>
         <td>${(r.categories || []).join(', ') || '—'}</td>
         <td>${(r.ingredients || []).length}</td>
         <td>${r.published ? '<span class="badge">Опубликован</span>' : '<span class="badge" style="background:#f0f0f0;color:#888">Скрыт</span>'}</td>
@@ -926,6 +963,69 @@
         </td>
       </tr>
     `).join('');
+    updateRecSelection();
+  }
+
+  function updateRecSelection() {
+    const list = _recVisible();
+    const selVisible = list.filter(r => _recSel.has(r.id)).length;
+    document.getElementById('rec-sel-info').textContent = _recSel.size ? 'Выбрано: ' + _recSel.size : '';
+    document.getElementById('rec-pub').disabled = !_recSel.size;
+    document.getElementById('rec-hide').disabled = !_recSel.size;
+    document.getElementById('rec-unmark').disabled = !_recSel.size;
+    const all = document.getElementById('rec-all');
+    all.checked = list.length > 0 && selVisible === list.length;
+    all.indeterminate = selVisible > 0 && selVisible < list.length;
+  }
+
+  function setRecFilter(f) { _recFilter = f; renderRecipes(); }
+  function toggleRec(id, on) { if (on) _recSel.add(id); else _recSel.delete(id); updateRecSelection(); }
+  function toggleAllRec(on) {
+    _recVisible().forEach(r => { if (on) _recSel.add(r.id); else _recSel.delete(r.id); });
+    renderRecipes();
+  }
+
+  /** Убирает «ПРОВЕРИТЬ ПО ВИДЕО.» из заметок выбранных рецептов (остальной текст заметок сохраняется) */
+  async function bulkUnmark() {
+    const re = /ПРОВЕРИТЬ ПО ВИДЕО\.?\s*/i;
+    const chosen = _recipesAll.filter(r => _recSel.has(r.id) && re.test(r.notes || ''));
+    if (!chosen.length) { alert('У выбранных нет пометки «ПРОВЕРИТЬ ПО ВИДЕО».'); return; }
+    if (!confirm('Убрать пометку «ПРОВЕРИТЬ ПО ВИДЕО.» у рецептов: ' + chosen.length + '?\nДелайте это после того, как проверили рецепты.')) return;
+    let done = 0;
+    for (const r of chosen) {
+      const { error } = await db.from('recipes').update({ notes: (r.notes || '').replace(re, '').trim() }).eq('id', r.id);
+      if (error) { alert('Ошибка: ' + error.message + '\nОбработано: ' + done + ' из ' + chosen.length); break; }
+      done++;
+    }
+    invalidateRecipesCache();
+    await loadRecipes();
+    alert('Пометка снята у рецептов: ' + done);
+  }
+
+  /** Массовая публикация / скрытие выбранных рецептов */
+  async function bulkPublish(publish) {
+    const chosen = _recipesAll.filter(r => _recSel.has(r.id) && r.published !== publish);
+    if (!chosen.length) { alert(publish ? 'Среди выбранных нет скрытых рецептов.' : 'Среди выбранных нет опубликованных рецептов.'); return; }
+    const flagged = chosen.filter(r => /ПРОВЕРИТЬ/i.test(r.notes || '')).length;
+    let msg = (publish ? 'Опубликовать' : 'Скрыть') + ' рецептов: ' + chosen.length + '?';
+    if (publish) msg += '\nОни сразу появятся на сайте и в приложении.';
+    if (publish && flagged) msg += '\n\nВнимание: у ' + flagged + ' в заметках стоит «ПРОВЕРИТЬ ПО ВИДЕО» — пометка будет видна пользователям. Лучше сначала убрать её (Изменить → Заметки).';
+    if (!confirm(msg)) return;
+
+    const ids = chosen.map(r => r.id);
+    for (let i = 0; i < ids.length; i += 50) {
+      const part = ids.slice(i, i + 50);
+      const { error } = await db.from('recipes').update({ published: publish }).in('id', part);
+      if (error) {
+        alert('Ошибка на пакете ' + (i / 50 + 1) + ': ' + error.message + '\nУже обработано: ' + i + ' из ' + ids.length);
+        await loadRecipes();
+        return;
+      }
+    }
+    _recSel.clear();
+    invalidateRecipesCache();
+    await loadRecipes();
+    alert((publish ? 'Опубликовано: ' : 'Скрыто: ') + ids.length);
   }
 
   async function deleteRecipe(id) {
