@@ -116,8 +116,17 @@
   }
 
   // ── Словарь ингредиентов пачки ─────────────────────────────────────────────
+  // Показывает сводку по всем рецептам и позволяет одним действием создать недостающие
+  // ингредиенты в каталоге (с синонимами) или привязать их к уже существующим.
 
-  S.dictFilter = 'all';
+  var DICT_UNDO_KEY = 'yc_import_dict_undo';
+  var ING_CATEGORIES = ['Мука и крупы', 'Молочные', 'Мясо', 'Рыба', 'Овощи', 'Фрукты', 'Масла', 'Соусы', 'Выпечка', 'Напитки', 'Специи', 'Прочее'];
+  var ING_UNITS = ['г', 'кг', 'мл', 'л', 'шт.', 'ч.л.', 'ст.л.'];
+
+  S.dictFilter = 'new';
+  S.dstate = {};          // fold(canonical) -> { sel, name, cat, unit, link }
+
+  function dkey(canonical) { return IngredientDict.fold(canonical); }
 
   function buildDict() {
     var map = {}, lines = 0, covered = 0, rawSet = {};
@@ -125,46 +134,190 @@
       it.ings.forEach(function (g) {
         lines++;
         rawSet[IngredientDict.fold(g.name)] = true;
-        var k = IngredientDict.fold(g.match.canonical);
-        var d = map[k] || (map[k] = { canonical: g.match.canonical, status: g.match.status, category: g.match.dict.category,
-          unit: g.match.dict.unit, lines: 0, recipes: {}, raws: {} });
+        var k = dkey(g.match.canonical);
+        var d = map[k] || (map[k] = { key: k, canonical: g.match.canonical, status: g.match.status, category: g.match.dict.category,
+          unit: g.match.dict.unit, lines: 0, recipes: {}, raws: {}, bases: {} });
         d.lines++; d.recipes[it.idx] = true; d.raws[g.name] = (d.raws[g.name] || 0) + 1;
+        if (g.match.dict.base) d.bases[g.match.dict.base] = true;
         if (g.match.status === 'ok') covered++;
       });
     });
     S.dict = Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) { return b.lines - a.lines; });
     S.dictStats = { lines: lines, covered: covered, rawNames: Object.keys(rawSet).length };
+    // состояние строк: сохраняем уже сделанные правки, для новых — значения по умолчанию
+    S.dict.forEach(function (d) {
+      if (d.status === 'ok') return;
+      var st = S.dstate[d.key];
+      if (!st) S.dstate[d.key] = { sel: d.status === 'new', name: d.canonical, cat: d.category, unit: d.unit, link: '' };
+    });
+  }
+
+  function dictPending() {
+    var create = [], link = [];
+    (S.dict || []).forEach(function (d) {
+      var st = S.dstate[d.key];
+      if (d.status === 'ok' || !st || !st.sel) return;
+      if (st.link) link.push(d); else create.push(d);
+    });
+    return { create: create, link: link };
+  }
+
+  function updateDictButton() {
+    var b = $('imp-dict-go');
+    if (!b) return;
+    var p = dictPending();
+    b.textContent = 'Применить к каталогу: создать ' + p.create.length + ', привязать ' + p.link.length;
+    b.disabled = S.busy || (!p.create.length && !p.link.length);
   }
 
   function renderDict() {
     var box = $('imp-dict');
     if (!S.dict || !S.items.length) { box.innerHTML = ''; return; }
-    var st = S.dictStats;
+    var st0 = S.dictStats;
     var inCat = S.dict.filter(function (d) { return d.status === 'ok'; }).length;
     var fresh = S.dict.filter(function (d) { return d.status === 'new'; }).length;
     var unk = S.dict.filter(function (d) { return d.status === 'unknown'; }).length;
     var flt = S.dictFilter;
+    var catOpts = function (sel) { return ING_CATEGORIES.map(function (c) { return '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join(''); };
+    var unitOpts = function (sel) { return ING_UNITS.map(function (c) { return '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join(''); };
+
     var rows = S.dict.filter(function (d) {
-      return flt === 'all' ? true : flt === 'ok' ? d.status === 'ok' : flt === 'new' ? d.status === 'new' : d.status === 'unknown';
+      return flt === 'all' ? true : flt === 'ok' ? d.status === 'ok' : flt === 'new' ? d.status !== 'ok' : false;
     }).map(function (d) {
-      var badge = d.status === 'ok' ? '<span class="badge" style="background:#e6f4e6;color:#2d7a2d">в каталоге</span>'
-        : d.status === 'new' ? '<span class="badge" style="background:#fff3cd;color:#8a6100">новый</span>'
+      var variants = Object.keys(d.bases).filter(function (r) { return IngredientDict.fold(r) !== d.key; });
+      var vtxt = '<td style="font-size:12px;color:var(--text-muted)">' + esc(variants.slice(0, 5).join('; ') + (variants.length > 5 ? '; … (+' + (variants.length - 5) + ')' : '')) + '</td>';
+      var counts = '<td style="text-align:right">' + d.lines + '</td><td style="text-align:right">' + Object.keys(d.recipes).length + '</td>';
+      if (d.status === 'ok') {
+        return '<tr><td></td><td><strong>' + esc(d.canonical) + '</strong> <span class="badge" style="background:#e6f4e6;color:#2d7a2d">в каталоге</span></td>' +
+          counts + '<td colspan="3" style="font-size:12px;color:var(--text-muted)">' + esc(d.category) + ' · ' + esc(d.unit) + '</td>' + vtxt + '</tr>';
+      }
+      var st = S.dstate[d.key];
+      var dis = st.link ? ' disabled' : '';
+      var badge = d.status === 'new' ? '<span class="badge" style="background:#fff3cd;color:#8a6100">новый</span>'
         : '<span class="badge" style="background:#fbe9e9;color:#a33">нет в словаре</span>';
-      var variants = Object.keys(d.raws).filter(function (r) { return IngredientDict.fold(r) !== IngredientDict.fold(d.canonical); });
-      return '<tr><td><strong>' + esc(d.canonical) + '</strong></td><td>' + badge + '</td>' +
-        '<td style="text-align:right">' + d.lines + '</td><td style="text-align:right">' + Object.keys(d.recipes).length + '</td>' +
-        '<td>' + esc(d.category) + ' · ' + esc(d.unit) + '</td>' +
-        '<td style="font-size:12px;color:var(--text-muted)">' + esc(variants.slice(0, 6).join('; ') + (variants.length > 6 ? '; … (+' + (variants.length - 6) + ')' : '')) + '</td></tr>';
+      return '<tr>' +
+        '<td><input type="checkbox" style="width:16px;height:16px" ' + (st.sel ? 'checked ' : '') + 'onchange="Imp.dSel(\'' + d.key.replace(/'/g, '') + '\', this.checked)"></td>' +
+        '<td>' + badge + '<br><input type="text" value="' + esc(st.name) + '"' + dis + ' style="padding:4px 8px;font-size:13px;margin-top:3px" onchange="Imp.dSet(\'' + d.key.replace(/'/g, '') + '\', \'name\', this.value)"></td>' +
+        counts +
+        '<td><select style="padding:4px;font-size:12px"' + dis + ' onchange="Imp.dSet(\'' + d.key.replace(/'/g, '') + '\', \'cat\', this.value)">' + catOpts(st.cat) + '</select></td>' +
+        '<td><select style="padding:4px;font-size:12px;width:64px"' + dis + ' onchange="Imp.dSet(\'' + d.key.replace(/'/g, '') + '\', \'unit\', this.value)">' + unitOpts(st.unit) + '</select></td>' +
+        '<td><input type="text" list="imp-cat-list" placeholder="привязать к…" value="' + esc(st.link) + '" style="padding:4px 8px;font-size:12px;width:130px" onchange="Imp.dLink(\'' + d.key.replace(/'/g, '') + '\', this.value)"></td>' +
+        vtxt + '</tr>';
     }).join('');
+
     function chip(f, label) {
       return '<button class="btn ' + (flt === f ? 'btn-primary' : 'btn-ghost') + '" style="padding:4px 10px;font-size:12px" onclick="Imp.dictFilter(\'' + f + '\')">' + label + '</button> ';
     }
+    var listOpts = (S.catalog || []).map(function (c) { return '<option value="' + esc(c.name) + '">'; }).join('');
     box.innerHTML = '<details ' + (S.dictOpen ? 'open' : '') + ' ontoggle="Imp.dictToggle(this.open)" style="margin:10px 0;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:10px 14px">' +
-      '<summary style="cursor:pointer;font-weight:600">Словарь ингредиентов: ' + st.rawNames + ' названий в тексте → ' + S.dict.length +
+      '<summary style="cursor:pointer;font-weight:600">Словарь ингредиентов: ' + st0.rawNames + ' названий в тексте → ' + S.dict.length +
       ' после очистки (в каталоге ' + inCat + ', новых ' + fresh + (unk ? ', неизвестных ' + unk : '') + '); строк с привязкой к каталогу ' +
-      Math.round(st.covered / Math.max(1, st.lines) * 100) + '%</summary>' +
-      '<div style="margin:10px 0">' + chip('all', 'Все (' + S.dict.length + ')') + chip('new', 'Новые (' + fresh + ')') + chip('ok', 'В каталоге (' + inCat + ')') + (unk ? chip('unknown', 'Неизвестные (' + unk + ')') : '') + '</div>' +
-      '<div style="max-height:420px;overflow:auto"><table class="recipes-table"><thead><tr><th>Ингредиент</th><th>Статус</th><th style="text-align:right">Строк</th><th style="text-align:right">Рецептов</th><th>Категория · ед.</th><th>Варианты в текстах</th></tr></thead><tbody>' + rows + '</tbody></table></div></details>';
+      Math.round(st0.covered / Math.max(1, st0.lines) * 100) + '%</summary>' +
+      '<datalist id="imp-cat-list">' + listOpts + '</datalist>' +
+      '<div style="margin:10px 0">' + chip('new', 'Нужно решить (' + (fresh + unk) + ')') + chip('ok', 'В каталоге (' + inCat + ')') + chip('all', 'Все (' + S.dict.length + ')') + '</div>' +
+      '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Отмеченные ингредиенты будут <strong>созданы в каталоге</strong> с указанными категорией и единицей (сразу «проверенными»). ' +
+      'Если в поле «привязать к…» выбран существующий ингредиент, новый не создаётся, а название добавляется ему в синонимы. Снимите галочку, чтобы оставить ингредиент текстом.</div>' +
+      '<div style="margin-bottom:8px"><button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="Imp.dAll(true)">Отметить все</button> ' +
+      '<button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="Imp.dAll(false)">Снять все</button></div>' +
+      '<div style="max-height:460px;overflow:auto"><table class="recipes-table"><thead><tr><th></th><th>Ингредиент</th><th style="text-align:right">Строк</th><th style="text-align:right">Рец.</th><th>Категория</th><th>Ед.</th><th>Привязать</th><th>Варианты</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div style="margin-top:10px"><button class="btn btn-success" id="imp-dict-go" onclick="Imp.dApply()">Применить к каталогу</button> ' +
+      '<button class="btn btn-ghost" id="imp-dict-undo" style="display:none" onclick="Imp.dUndo()">Отменить последнее изменение каталога</button></div></details>';
+    updateDictButton();
+    updateDictUndo();
+  }
+
+  function saveDictUndo(u) { try { localStorage.setItem(DICT_UNDO_KEY, JSON.stringify(u)); } catch (e) {} }
+  function loadDictUndo() { try { return JSON.parse(localStorage.getItem(DICT_UNDO_KEY) || 'null'); } catch (e) { return null; } }
+  function updateDictUndo() {
+    var b = $('imp-dict-undo'), u = loadDictUndo();
+    if (b) b.style.display = (u && ((u.created || []).length || (u.links || []).length)) ? '' : 'none';
+  }
+
+  // Перепривязка всех ингредиентов к обновлённому каталогу
+  function rematch() {
+    S.items.forEach(function (it) {
+      it.ings.forEach(function (g) { g.match = matchIngredient(g.name); });
+      it.unknown = it.ings.filter(function (i) { return i.match.status !== 'ok'; }).length;
+    });
+    buildDict();
+  }
+
+  async function applyDict() {
+    if (S.busy) return;
+    var p = dictPending();
+    if (!p.create.length && !p.link.length) return;
+    // валидация имён
+    var names = {}, bad = [];
+    p.create.forEach(function (d) {
+      var st = S.dstate[d.key], n = IngredientDict.fold(st.name);
+      if (!n) bad.push('пустое название'); else if (names[n]) bad.push('повтор: ' + st.name); names[n] = true;
+      if (S.catIndex[n]) bad.push('«' + st.name + '» уже есть в каталоге — привяжите к нему');
+    });
+    if (bad.length) { alert('Исправьте:\n' + bad.slice(0, 8).join('\n')); return; }
+    if (!confirm('Изменить каталог ингредиентов?\n\nСоздать новых: ' + p.create.length + '\nПривязать как синонимы: ' + p.link.length +
+      '\n\nПотом это можно отменить кнопкой «Отменить последнее изменение каталога».')) return;
+
+    S.busy = true; updateDictButton(); showMsg('Обновляю каталог…', false);
+    var undo = { created: [], links: [] };
+    try {
+      // 1. создаём новые ингредиенты
+      var rows = p.create.map(function (d) {
+        var st = S.dstate[d.key], name = st.name.trim().toLowerCase();
+        var aliases = Object.keys(d.bases).map(function (b) { return b.trim().toLowerCase(); })
+          .filter(function (b, i, a) { return b && b !== name && a.indexOf(b) === i; });
+        return { name: name, aliases: aliases, default_unit: st.unit, category: st.cat, verified: true };
+      });
+      for (var i = 0; i < rows.length; i += 50) {
+        var res = await db.from('ingredients').insert(rows.slice(i, i + 50)).select('id, name');
+        if (res.error) throw new Error(res.error.message + ' (создано до ошибки: ' + undo.created.length + ')');
+        res.data.forEach(function (r) { undo.created.push(r.id); });
+      }
+      // 2. привязки: добавляем синонимы существующим
+      for (var k = 0; k < p.link.length; k++) {
+        var d2 = p.link[k], st2 = S.dstate[d2.key];
+        var target = (S.catalog || []).filter(function (c) { return IngredientDict.fold(c.name) === IngredientDict.fold(st2.link); })[0];
+        if (!target) continue;
+        var before = (target.aliases || []).slice();
+        var add = Object.keys(d2.bases).concat([d2.canonical]).map(function (b) { return b.trim().toLowerCase(); });
+        var merged = before.slice();
+        add.forEach(function (a) { if (a && a !== target.name.toLowerCase() && merged.map(IngredientDict.fold).indexOf(IngredientDict.fold(a)) === -1) merged.push(a); });
+        if (merged.length === before.length) continue;
+        var up = await db.from('ingredients').update({ aliases: merged }).eq('name', target.name);
+        if (up.error) throw new Error(up.error.message);
+        undo.links.push({ name: target.name, aliases: before });
+        target.aliases = merged;
+      }
+      saveDictUndo(undo);
+      S.catalog = null; await loadCatalog();
+      S.dstate = {}; rematch(); render();
+      showMsg('Каталог обновлён: создано ' + undo.created.length + ', синонимов добавлено у ' + undo.links.length + ' ингредиентов.', false);
+    } catch (e) {
+      saveDictUndo(undo);
+      showMsg('Ошибка: ' + e.message, true);
+      try { S.catalog = null; await loadCatalog(); rematch(); render(); } catch (e2) {}
+    }
+    S.busy = false; updateDictButton(); updateDictUndo();
+  }
+
+  async function undoDict() {
+    var u = loadDictUndo();
+    if (!u) return;
+    if (!confirm('Отменить последнее изменение каталога?\nБудет удалено создано ингредиентов: ' + (u.created || []).length + ', восстановлены синонимы у ' + (u.links || []).length + '.')) return;
+    S.busy = true; showMsg('Отменяю…', false);
+    try {
+      if ((u.created || []).length) {
+        var r1 = await db.from('ingredients').delete().in('id', u.created);
+        if (r1.error) throw new Error(r1.error.message);
+      }
+      for (var i = 0; i < (u.links || []).length; i++) {
+        var r2 = await db.from('ingredients').update({ aliases: u.links[i].aliases }).eq('name', u.links[i].name);
+        if (r2.error) throw new Error(r2.error.message);
+      }
+      saveDictUndo(null);
+      S.catalog = null; await loadCatalog(); S.dstate = {}; rematch(); render();
+      showMsg('Изменение каталога отменено.', false);
+    } catch (e) { showMsg('Ошибка отмены: ' + e.message, true); }
+    S.busy = false; updateDictButton(); updateDictUndo();
   }
 
   // ── Отрисовка ──────────────────────────────────────────────────────────────
@@ -395,6 +548,25 @@
     clear: function () { S.items = []; $('imp-text').value = ''; $('imp-files').textContent = ''; $('imp-list').innerHTML = ''; $('imp-summary').innerHTML = ''; $('imp-filters').innerHTML = ''; showMsg('', false); render(); },
     setFilter: function (f) { S.filter = f; render(); },
     dictFilter: function (f) { S.dictFilter = f; S.dictOpen = true; renderDict(); },
+    dSel: function (k, on) { if (S.dstate[k]) { S.dstate[k].sel = on; updateDictButton(); } },
+    dSet: function (k, field, v) {
+      var st = S.dstate[k]; if (!st) return;
+      st[field] = v;
+      if (field === 'name') {
+        var hit = S.catIndex[IngredientDict.fold(v)];
+        if (hit) { st.link = hit; st.sel = true; S.dictOpen = true; renderDict(); }
+      }
+    },
+    dLink: function (k, v) {
+      var st = S.dstate[k]; if (!st) return;
+      var hit = S.catIndex[IngredientDict.fold(v)];
+      st.link = hit || '';
+      if (hit) st.sel = true;
+      S.dictOpen = true; renderDict();
+    },
+    dAll: function (on) { (S.dict || []).forEach(function (d) { if (d.status !== 'ok' && S.dstate[d.key]) S.dstate[d.key].sel = on; }); S.dictOpen = true; renderDict(); },
+    dApply: applyDict,
+    dUndo: undoDict,
     dictToggle: function (o) { S.dictOpen = o; },
     toggle: function (i, v) { S.items[i].selected = v; updateSummary(); },
     setCat: function (i, v) { S.items[i].category = v; render(); },
