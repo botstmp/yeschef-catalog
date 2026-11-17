@@ -655,13 +655,19 @@
       <button class="btn btn-primary" onclick="openForm(null)">+ Добавить рецепт</button>
     </div>
 
-    <div id="rec-bar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
-      <span id="rec-filters"></span>
+    <!-- Фильтр списка -->
+    <div id="rec-filters" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
+
+    <!-- Панель действий: появляется, когда что-то выбрано -->
+    <div id="rec-actions" style="display:none;position:sticky;top:0;z-index:5;align-items:center;gap:10px;flex-wrap:wrap;
+         background:var(--primary-light);border:1px solid var(--primary);border-radius:var(--radius);padding:10px 14px;margin-bottom:12px">
+      <strong id="rec-sel-info" style="font-size:14px"></strong>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="clearRecSel()">Сбросить</button>
       <span style="flex:1"></span>
-      <span id="rec-sel-info" style="font-size:13px;color:var(--text-muted)"></span>
-      <button class="btn btn-success" id="rec-pub" style="padding:6px 14px;font-size:13px" onclick="bulkPublish(true)">Опубликовать выбранные</button>
-      <button class="btn btn-ghost" id="rec-unmark" style="padding:6px 14px;font-size:13px" onclick="bulkUnmark()" title="Убрать из заметок «ПРОВЕРИТЬ ПО ВИДЕО.» у выбранных (после вашей проверки)">Снять пометку «проверить»</button>
-      <button class="btn btn-ghost" id="rec-hide" style="padding:6px 14px;font-size:13px" onclick="bulkPublish(false)">Скрыть выбранные</button>
+      <button class="btn btn-success" id="rec-pub" style="padding:7px 16px;font-size:13px" onclick="bulkPublish(true)">Опубликовать</button>
+      <button class="btn btn-ghost" id="rec-hide" style="padding:7px 16px;font-size:13px;background:var(--surface)" onclick="bulkPublish(false)">Скрыть</button>
+      <button class="btn btn-ghost" id="rec-unmark" style="padding:7px 16px;font-size:13px;background:var(--surface)" onclick="bulkUnmark()"
+        title="Убрать из заметок «ПРОВЕРИТЬ ПО ВИДЕО.» у выбранных (после вашей проверки)">Снять пометку «проверить»</button>
     </div>
 
     <table class="recipes-table">
@@ -969,15 +975,14 @@
   function updateRecSelection() {
     const list = _recVisible();
     const selVisible = list.filter(r => _recSel.has(r.id)).length;
-    document.getElementById('rec-sel-info').textContent = _recSel.size ? 'Выбрано: ' + _recSel.size : '';
-    document.getElementById('rec-pub').disabled = !_recSel.size;
-    document.getElementById('rec-hide').disabled = !_recSel.size;
-    document.getElementById('rec-unmark').disabled = !_recSel.size;
+    document.getElementById('rec-sel-info').textContent = 'Выбрано: ' + _recSel.size;
+    document.getElementById('rec-actions').style.display = _recSel.size ? 'flex' : 'none';
     const all = document.getElementById('rec-all');
     all.checked = list.length > 0 && selVisible === list.length;
     all.indeterminate = selVisible > 0 && selVisible < list.length;
   }
 
+  function clearRecSel() { _recSel.clear(); renderRecipes(); }
   function setRecFilter(f) { _recFilter = f; renderRecipes(); }
   function toggleRec(id, on) { if (on) _recSel.add(id); else _recSel.delete(id); updateRecSelection(); }
   function toggleAllRec(on) {
