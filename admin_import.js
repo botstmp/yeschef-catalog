@@ -49,26 +49,24 @@
     if (S.catalog) return;
     try { S.catalog = await fetchAll('ingredients', 'name, aliases'); }
     catch (e) { S.catalog = []; }
+    buildCatIndex();
   }
 
   // ── Сопоставление ингредиентов с каталогом ─────────────────────────────────
 
+  function buildCatIndex() {
+    S.catIndex = {};
+    (S.catalog || []).forEach(function (c) {
+      [c.name].concat(c.aliases || []).forEach(function (n) { S.catIndex[IngredientDict.fold(n)] = c.name; });
+    });
+  }
+
+  /** ok — есть в каталоге; new — словарь знает, в каталоге ещё нет; unknown — словарь не знает */
   function matchIngredient(name) {
-    var q = normalizeForMatch(name);
-    var best = null, bestScore = 0;
-    for (var i = 0; i < S.catalog.length; i++) {
-      var c = S.catalog[i];
-      var names = [c.name].concat(c.aliases || []);
-      for (var j = 0; j < names.length; j++) {
-        var s = (normalizeForMatch(names[j]) === q) ? 1 : scoreMatch(name, names[j]);
-        if (s > bestScore) { bestScore = s; best = c; }
-        if (bestScore === 1) break;
-      }
-      if (bestScore === 1) break;
-    }
-    if (best && bestScore >= 0.8) return { status: 'ok', canonical: capitalize(best.name) };
-    if (best && bestScore >= 0.45) return { status: 'similar', canonical: capitalize(best.name), score: bestScore };
-    return { status: 'none' };
+    var r = IngredientDict.resolve(name);
+    var hit = S.catIndex[IngredientDict.fold(r.canonical)] || S.catIndex[IngredientDict.fold(name)];
+    if (hit) return { status: 'ok', canonical: capitalize(hit), dict: r };
+    return { status: r.known ? 'new' : 'unknown', canonical: capitalize(r.canonical), dict: r };
   }
 
   // ── Разбор ─────────────────────────────────────────────────────────────────
@@ -92,7 +90,7 @@
         var m = matchIngredient(i.name);
         return { name: i.name, quantity: i.quantity, unit: i.unit, match: m };
       });
-      var unknown = ings.filter(function (i) { return i.match.status === 'none'; }).length;
+      var unknown = ings.filter(function (i) { return i.match.status !== 'ok'; }).length;
 
       var cat = RecipeImport.CATEGORIES.indexOf(r.category) !== -1 ? r.category : '';
       var needsCheck = /ПРОВЕРИТЬ/i.test(r.notes || '');
@@ -112,8 +110,61 @@
     });
     S.filter = 'all';
     $('imp-result').style.display = 'none';
+    buildDict();
     render();
     showMsg('', false);
+  }
+
+  // ── Словарь ингредиентов пачки ─────────────────────────────────────────────
+
+  S.dictFilter = 'all';
+
+  function buildDict() {
+    var map = {}, lines = 0, covered = 0, rawSet = {};
+    S.items.forEach(function (it) {
+      it.ings.forEach(function (g) {
+        lines++;
+        rawSet[IngredientDict.fold(g.name)] = true;
+        var k = IngredientDict.fold(g.match.canonical);
+        var d = map[k] || (map[k] = { canonical: g.match.canonical, status: g.match.status, category: g.match.dict.category,
+          unit: g.match.dict.unit, lines: 0, recipes: {}, raws: {} });
+        d.lines++; d.recipes[it.idx] = true; d.raws[g.name] = (d.raws[g.name] || 0) + 1;
+        if (g.match.status === 'ok') covered++;
+      });
+    });
+    S.dict = Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) { return b.lines - a.lines; });
+    S.dictStats = { lines: lines, covered: covered, rawNames: Object.keys(rawSet).length };
+  }
+
+  function renderDict() {
+    var box = $('imp-dict');
+    if (!S.dict || !S.items.length) { box.innerHTML = ''; return; }
+    var st = S.dictStats;
+    var inCat = S.dict.filter(function (d) { return d.status === 'ok'; }).length;
+    var fresh = S.dict.filter(function (d) { return d.status === 'new'; }).length;
+    var unk = S.dict.filter(function (d) { return d.status === 'unknown'; }).length;
+    var flt = S.dictFilter;
+    var rows = S.dict.filter(function (d) {
+      return flt === 'all' ? true : flt === 'ok' ? d.status === 'ok' : flt === 'new' ? d.status === 'new' : d.status === 'unknown';
+    }).map(function (d) {
+      var badge = d.status === 'ok' ? '<span class="badge" style="background:#e6f4e6;color:#2d7a2d">в каталоге</span>'
+        : d.status === 'new' ? '<span class="badge" style="background:#fff3cd;color:#8a6100">новый</span>'
+        : '<span class="badge" style="background:#fbe9e9;color:#a33">нет в словаре</span>';
+      var variants = Object.keys(d.raws).filter(function (r) { return IngredientDict.fold(r) !== IngredientDict.fold(d.canonical); });
+      return '<tr><td><strong>' + esc(d.canonical) + '</strong></td><td>' + badge + '</td>' +
+        '<td style="text-align:right">' + d.lines + '</td><td style="text-align:right">' + Object.keys(d.recipes).length + '</td>' +
+        '<td>' + esc(d.category) + ' · ' + esc(d.unit) + '</td>' +
+        '<td style="font-size:12px;color:var(--text-muted)">' + esc(variants.slice(0, 6).join('; ') + (variants.length > 6 ? '; … (+' + (variants.length - 6) + ')' : '')) + '</td></tr>';
+    }).join('');
+    function chip(f, label) {
+      return '<button class="btn ' + (flt === f ? 'btn-primary' : 'btn-ghost') + '" style="padding:4px 10px;font-size:12px" onclick="Imp.dictFilter(\'' + f + '\')">' + label + '</button> ';
+    }
+    box.innerHTML = '<details ' + (S.dictOpen ? 'open' : '') + ' ontoggle="Imp.dictToggle(this.open)" style="margin:10px 0;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:10px 14px">' +
+      '<summary style="cursor:pointer;font-weight:600">Словарь ингредиентов: ' + st.rawNames + ' названий в тексте → ' + S.dict.length +
+      ' после очистки (в каталоге ' + inCat + ', новых ' + fresh + (unk ? ', неизвестных ' + unk : '') + '); строк с привязкой к каталогу ' +
+      Math.round(st.covered / Math.max(1, st.lines) * 100) + '%</summary>' +
+      '<div style="margin:10px 0">' + chip('all', 'Все (' + S.dict.length + ')') + chip('new', 'Новые (' + fresh + ')') + chip('ok', 'В каталоге (' + inCat + ')') + (unk ? chip('unknown', 'Неизвестные (' + unk + ')') : '') + '</div>' +
+      '<div style="max-height:420px;overflow:auto"><table class="recipes-table"><thead><tr><th>Ингредиент</th><th>Статус</th><th style="text-align:right">Строк</th><th style="text-align:right">Рецептов</th><th>Категория · ед.</th><th>Варианты в текстах</th></tr></thead><tbody>' + rows + '</tbody></table></div></details>';
   }
 
   // ── Отрисовка ──────────────────────────────────────────────────────────────
@@ -159,10 +210,10 @@
       var mark = '';
       if (i.match.status === 'ok' && i.match.canonical.toLowerCase() !== i.name.toLowerCase())
         mark = ' <span style="color:var(--success)">→ ' + esc(i.match.canonical) + '</span>';
-      else if (i.match.status === 'similar')
-        mark = ' <span style="color:#8a6100">(похоже: ' + esc(i.match.canonical) + ')</span>';
-      else if (i.match.status === 'none')
-        mark = ' <span style="color:var(--text-muted)">(нет в каталоге)</span>';
+      else if (i.match.status === 'new')
+        mark = ' <span style="color:#8a6100">→ ' + esc(i.match.canonical) + ' (будет создан в каталоге)</span>';
+      else if (i.match.status === 'unknown')
+        mark = ' <span style="color:var(--text-muted)">(нет в словаре: ' + esc(i.match.canonical) + ')</span>';
       h += '<li>' + esc(i.name) + ' — ' + esc(i.quantity || '') + ' ' + esc(i.unit) + mark + '</li>';
     });
     h += '</ul><strong>Приготовление</strong><ol style="margin:4px 0 8px 18px">';
@@ -193,6 +244,7 @@
   function render() {
     var items = S.items;
     updateSummary();
+    renderDict();
 
     var filters = [['all', 'Все'], ['new', 'Новые'], ['dup', 'Повторы'], ['check', 'Требуют внимания'], ['sel', 'Выбранные']];
     $('imp-filters').innerHTML = filters.map(function (f) {
@@ -342,6 +394,8 @@
     parse: function () { analyze($('imp-text').value); },
     clear: function () { S.items = []; $('imp-text').value = ''; $('imp-files').textContent = ''; $('imp-list').innerHTML = ''; $('imp-summary').innerHTML = ''; $('imp-filters').innerHTML = ''; showMsg('', false); render(); },
     setFilter: function (f) { S.filter = f; render(); },
+    dictFilter: function (f) { S.dictFilter = f; S.dictOpen = true; renderDict(); },
+    dictToggle: function (o) { S.dictOpen = o; },
     toggle: function (i, v) { S.items[i].selected = v; updateSummary(); },
     setCat: function (i, v) { S.items[i].category = v; render(); },
     more: function (i) { var el = $('imp-more-' + i); el.style.display = el.style.display === 'none' ? '' : 'none'; },
