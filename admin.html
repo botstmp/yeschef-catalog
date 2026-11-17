@@ -596,6 +596,18 @@
   </div>
   <button class="btn btn-primary" onclick="login()" style="width:100%">Войти</button>
   <div class="error-msg" id="login-error"></div>
+  <p style="margin-top:14px;font-size:13px"><a href="#" onclick="forgotPassword(); return false;" style="color:var(--primary)">Забыли пароль? Отправить ссылку на почту</a></p>
+  <div id="login-info" style="font-size:13px;color:var(--success);margin-top:6px"></div>
+</div>
+
+<!-- Экран нового пароля (открывается по ссылке из письма «Reset password») -->
+<div id="screen-recover" style="display:none;max-width:380px;margin:80px auto;padding:0 20px">
+  <h2 style="font-size:22px;margin-bottom:6px">Новый пароль</h2>
+  <p style="font-size:14px;color:var(--text-muted);margin-bottom:20px">Придумайте длинный пароль (не короче 10 символов) и сохраните его в менеджере паролей.</p>
+  <div class="field"><label>Новый пароль</label><input type="password" id="new-pass" autocomplete="new-password"></div>
+  <div class="field"><label>Повторите пароль</label><input type="password" id="new-pass2" autocomplete="new-password" onkeydown="if(event.key==='Enter') saveNewPassword()"></div>
+  <button class="btn btn-primary" style="width:100%" onclick="saveNewPassword()">Сохранить пароль</button>
+  <div class="error-msg" id="recover-error"></div>
 </div>
 
 <!-- Основной экран -->
@@ -884,6 +896,32 @@
     }
   }
 
+  async function forgotPassword() {
+    const email = document.getElementById('email').value.trim();
+    const err = document.getElementById('login-error'), info = document.getElementById('login-info');
+    err.textContent = ''; info.textContent = '';
+    if (!email) { err.textContent = 'Введите email в поле выше'; return; }
+    const { error } = await db.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+    if (error) { err.textContent = 'Не удалось отправить письмо: ' + error.message; return; }
+    info.textContent = 'Если такой email есть, на него отправлена ссылка. Откройте её в этом же браузере.';
+  }
+
+  async function saveNewPassword() {
+    const p1 = document.getElementById('new-pass').value, p2 = document.getElementById('new-pass2').value;
+    const err = document.getElementById('recover-error');
+    err.textContent = '';
+    if (p1.length < 10) { err.textContent = 'Пароль должен быть не короче 10 символов'; return; }
+    if (p1 !== p2) { err.textContent = 'Пароли не совпадают'; return; }
+    const { error } = await db.auth.updateUser({ password: p1 });
+    if (error) { err.textContent = 'Не удалось сохранить: ' + error.message; return; }
+    document.getElementById('new-pass').value = ''; document.getElementById('new-pass2').value = '';
+    // убираем токены из адресной строки и открываем панель
+    history.replaceState(null, '', location.pathname);
+    document.getElementById('screen-recover').style.display = 'none';
+    alert('Пароль изменён.');
+    location.reload();
+  }
+
   async function logout() {
     await db.auth.signOut();
   }
@@ -891,6 +929,13 @@
   // ── Сессия ───────────────────────────────────────────────
 
   db.auth.onAuthStateChange((event, session) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      document.getElementById('screen-login').style.display     = 'none';
+      document.getElementById('screen-dashboard').style.display = 'none';
+      document.getElementById('app-header').style.display       = 'none';
+      document.getElementById('screen-recover').style.display   = '';
+      return;
+    }
     if (session) {
       document.getElementById('screen-login').style.display    = 'none';
       document.getElementById('screen-dashboard').style.display = 'block';
