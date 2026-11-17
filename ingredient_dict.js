@@ -249,7 +249,7 @@
 
   /** Очищает название. Возвращает { base: очищенное название, note: что было убрано } */
   function cleanName(raw) {
-    var s = fold(raw), notes = [];
+    var s = String(raw).toLowerCase().replace(/\s+/g, ' ').trim(), notes = [];
     s = s.replace(/\([^)]*\)/g, function (m) { notes.push(m.slice(1, -1)); return ' '; });
     // выбор «A или B» и перечисление через запятую — берём первое
     var cut = s.search(/\sили\s|,/);
@@ -258,7 +258,7 @@
     s = s.replace(/\s(на кости|высшего сорта|в собственном соку)(?=\s|$)/g, function (m) { notes.push(m.trim()); return ''; });
     var pre = s.replace(/\s+/g, ' ').trim();   // до удаления слов-описаний («дрожжи свежие» должны остаться)
     var out = s.split(' ').filter(function (t) {
-      if (t && DESCRIPTORS[t]) { notes.push(t); return false; }
+      if (t && DESCRIPTORS[fold(t)]) { notes.push(t); return false; }
       return !!t;
     }).join(' ');
     return { base: out.trim(), pre: pre, note: notes.join('; ') };

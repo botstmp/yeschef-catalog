@@ -265,7 +265,7 @@
         var st = S.dstate[d.key], name = st.name.trim().toLowerCase();
         var aliases = Object.keys(d.bases).map(function (b) { return b.trim().toLowerCase(); })
           .filter(function (b, i, a) { return b && b !== name && a.indexOf(b) === i; });
-        return { name: name, aliases: aliases, default_unit: st.unit, category: st.cat, verified: true };
+        return { name: name, aliases: aliases, default_unit: st.unit, category: ING_CATEGORIES.indexOf(st.cat) !== -1 ? st.cat : 'Прочее', verified: true };
       });
       for (var i = 0; i < rows.length; i += 50) {
         var res = await db.from('ingredients').insert(rows.slice(i, i + 50)).select('id, name');
